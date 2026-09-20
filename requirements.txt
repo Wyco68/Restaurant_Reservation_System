@@ -1,0 +1,30 @@
+# TableFlow
+# Python 3.11+
+
+# --- Web API tier ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic[email]==2.10.4
+pydantic-settings==2.7.0
+
+# --- PostgreSQL (relational, transactional core) ---
+# SQLAlchemy 2.x ORM + Core. Every statement is a parameterized construct;
+# raw SQL string concatenation is banned in this codebase.
+SQLAlchemy[asyncio]==2.0.36
+psycopg[binary,pool]==3.2.3
+alembic==1.14.0
+
+# --- MongoDB (document store) ---
+motor==3.6.0
+
+# --- Auth ---
+bcrypt==4.2.1
+PyJWT==2.10.1
+
+# --- Seed data ---
+Faker==33.1.0
+
+# --- Tests ---
+pytest==8.3.4
+pytest-asyncio==0.25.0
+httpx==0.28.1

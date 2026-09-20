@@ -1,0 +1,65 @@
+# TableFlow — local development infrastructure
+# Launches both database engines with volume persistence.
+#
+# SECURITY: no credentials are hard-coded here. Every value comes from .env,
+# which is gitignored. Copy .env.example to .env and change the passwords
+# before running. The defaults in .env.example are development-only and must
+# never be reused for anything reachable from a network.
+
+services:
+  postgres_db:
+    image: postgres:15-alpine
+    container_name: tableflow_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      # Standard PostgreSQL port.
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Data survives `docker compose down`.
+      - postgres_data:/var/lib/postgresql/data
+      # Initial DDL setup scripts. Files here run once, in
+      # alphabetical order, the first time the volume is created.
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - tableflow_net
+
+  mongo_db:
+    image: mongo:6.0
+    container_name: tableflow_mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DB}
+    ports:
+      # Standard MongoDB port.
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      # Data survives `docker compose down`.
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - tableflow_net
+
+volumes:
+  postgres_data:
+  mongo_data:
+
+networks:
+  tableflow_net:
+    driver: bridge
