@@ -1,0 +1,45 @@
+# --- Secrets and configuration ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets.json
+appsettings.Development.json
+
+# --- Database files ---
+*.db
+*.sqlite
+*.sqlite3
+*.sql.gz
+*.dump
+dump/
+pgdata/
+mongodata/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs and local artifacts ---
+*.log
+logs/
+demo/*.mp4
