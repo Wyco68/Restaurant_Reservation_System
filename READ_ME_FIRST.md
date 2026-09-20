@@ -17,45 +17,46 @@ This matters because the CP1 rubric awards 20 points for *"equal commit distribu
 
 ---
 
-## M3 — MongoDB, seed data, migration tooling
+## M2 — Reservations and concurrency
 
 ```bash
 git checkout main && git pull
-git checkout -b feature/mongo-catalog
+git checkout -b feature/reservations
 
-git add app/db/mongo.py
-git commit -m "feat: Motor client, collection accessors and index creation
+git add app/schemas/reservation.py
+git commit -m "feat: reservation schemas with timezone-aware validation
 
-Index definitions live next to the collections rather than scattered
-through query code. Sparse indexes where most documents lack the key."
+Naive timestamps are rejected: a booking system that ignores timezones is
+a booking system with a bug."
 
-git add app/schemas/product.py app/routers/products.py
-git commit -m "feat: paginated product catalogue with dynamic attributes
+git add app/services/reservations.py
+git commit -m "feat: booking service returning 409 on overlapping reservations
 
-attributes is an open object: a curry sends spice_level and protein, a
-pizza sends size and toppings, both land in one collection with no schema
-change. The list endpoint uses an explicit projection so description and
-attributes are never read off disk to render a menu list."
+Translates the EXCLUDE constraint's IntegrityError into 409 Conflict. The
+pre-flight capacity and ownership checks exist for friendly error messages,
+not for correctness - removing them would degrade the messages, not the
+guarantee."
 
-git add scripts/seed.py
-git commit -m "feat: reproducible seed - 2,380 Postgres rows, 7,300 Mongo documents
+git add app/routers/reservations.py
+git commit -m "feat: reservation endpoints including cancel
 
-Faker seeded with a fixed value so every machine holds identical data.
-Deterministic UUID5 and ObjectId generation means a rerun upserts rather
-than duplicating. If the reservation generator ever produced an overlap the
-seed would fail against the EXCLUDE constraint, so a successful seed proves
-the constraint is live."
+Cancelling sets status rather than deleting the row. The constraint ignores
+cancelled rows, so the slot frees while the history is retained."
 
-git add alembic/versions/0002_expand_guest_name.py scripts/backfill_names.py
-git commit -m "feat: expand-contract step 1 and 3 for the guest_name migration
+git add app/routers/restaurants.py app/schemas/restaurant.py
+git commit -m "feat: restaurant search and availability
 
-Columns are added nullable with no default, which is metadata-only in
-Postgres 11+ - no table rewrite and no long lock. The backfill is batched,
-resumable and re-checks the null inside the UPDATE so live dual-writes are
-not clobbered. It imports split_guest_name from the service rather than
-reimplementing it, because two copies would eventually disagree."
+Search projects six named columns instead of whole entities. Availability
+fetches conflicts for every candidate table in one query rather than one
+query per table."
 
-git push -u origin feature/mongo-catalog
+git add scripts/traffic.py tests/
+git commit -m "test: concurrency proof - twenty simultaneous bookings, one winner
+
+Fires simultaneous requests at one table and one window and asserts exactly
+one 201 and nineteen 409."
+
+git push -u origin feature/reservations
 ```
 
 ---
