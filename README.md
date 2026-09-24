@@ -6,19 +6,24 @@ Restaurant booking and ordering platform on a dual-database backend: PostgreSQL 
 
 ## Quick start
 
-Requires Docker Desktop, Python 3.11+, Git.
+Requires Docker, Node.js, Git, and either Python 3.11–3.13 or [uv](https://docs.astral.sh/uv/). Python 3.14 cannot install the pinned `pydantic` and `psycopg` wheels; with uv present, 3.12 is used automatically.
 
 ```bash
 git clone https://github.com/Wyco68/Restaurant_Reservation_System.git
 cd Restaurant_Reservation_System
 cp .env.example .env          # then set the passwords and JWT_SECRET
-docker compose up -d          # wait for both to report healthy
-python -m venv .venv && .venv/Scripts/activate    # bash/zsh: source .venv/bin/activate
-pip install -r requirements.txt
-alembic upgrade head
-python scripts/seed.py
-uvicorn app.main:app --reload
+npm run seed                  # first time only
+npm start
 ```
+
+| Command | Does |
+|---|---|
+| `npm start` | Databases, API on :8000, web client on :5500. Ctrl+C stops the servers. |
+| `npm run seed` | Loads seed data. Skips if already present. |
+| `npm run reset` | **Wipes both databases**, then reseeds. |
+| `npm run stop` | Stops the database containers. Data persists. |
+
+Each command first starts the databases, builds `.venv` and runs migrations, skipping whatever is already done.
 
 `POSTGRES_PASSWORD`, `MONGO_PASSWORD` and `JWT_SECRET` are required — the app refuses to start without them. Generate a secret:
 
@@ -37,29 +42,23 @@ curl http://localhost:8000/health
 |---|---|
 | API | http://localhost:8000 |
 | Interactive docs | http://localhost:8000/docs |
-| Frontend | see below |
+| Frontend | http://localhost:5500 |
 
-**If port 5432 is already in use** (a native PostgreSQL service on the host), set `POSTGRES_PORT=5433` in `.env` and re-run `docker compose up -d`. The committed default stays 5432.
+**If port 5432 is already in use** (a native PostgreSQL service on the host), set `POSTGRES_PORT=5433` in `.env`. The committed default stays 5432.
 
-### Frontend
+**Never copy `.venv` or `frontend/node_modules` between Windows and Linux/macOS.** Both hold platform-specific binaries; `npm start` rebuilds them when they don't match.
 
-The client is a Vue 3 single-page app. A prebuilt copy is committed, so it runs with no extra tooling:
+### Frontend without Node
+
+A prebuilt copy of the Vue 3 client is committed. With the API running, serve it instead of the dev server:
 
 ```bash
 python -m http.server 5500 --directory frontend/dist
 ```
 
-Open http://localhost:5500. Port 5500 is the origin the API's CORS config allows.
+Port 5500 is the origin the API's CORS config allows.
 
-To develop the client instead:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-`npm` is a **build-time** dependency of the web client only. The backend is FastAPI; nothing Node-based runs at serve time, and `frontend/dist` is plain static HTML, CSS and JavaScript.
+Node is a **development-time** dependency only: the `npm start` launcher and the web client build. The backend is FastAPI; nothing Node-based runs at serve time, and `frontend/dist` is plain static HTML, CSS and JavaScript.
 
 ---
 
@@ -131,6 +130,12 @@ Status codes: `200` `201` `400` `401` `403` `404` `409` `422`
 
 ## Commands
 
+Day-to-day: `npm start`, `npm run seed`, `npm run reset`, `npm run stop` — see [Quick start](#quick-start). The commands below are the underlying tools; run them inside the venv that `npm start` builds:
+
+```bash
+source .venv/bin/activate     # Windows: .venv\Scripts\activate
+```
+
 ### Migrations
 
 ```bash
@@ -144,12 +149,12 @@ alembic history --verbose     # show history
 ### Seed
 
 ```bash
-python scripts/seed.py            # seed; skips if populated
-python scripts/seed.py --reset    # wipe and reseed
+python scripts/seed.py            # seed; skips if populated   (= npm run seed)
+python scripts/seed.py --reset    # wipe and reseed            (= npm run reset)
 python scripts/seed.py --verify   # count only
 ```
 
-Produces ~2,468 PostgreSQL rows and ~7,300 MongoDB documents.
+Produces ~2,512 PostgreSQL rows and ~7,300 MongoDB documents.
 
 ### Tests
 
@@ -162,11 +167,11 @@ Integration tests — run against the Docker databases. Start and seed them firs
 
 ### Reset everything
 
+`npm run reset` wipes data but keeps the schema. To also drop the schema and rerun `docker/initdb`:
+
 ```bash
-docker compose down -v
-docker compose up -d
-alembic upgrade head
-python scripts/seed.py
+npm run stop -- -v            # deletes both volumes
+npm run seed                  # recreate, migrate, seed
 ```
 
 ### Zero-downtime migration
@@ -179,7 +184,7 @@ python scripts/traffic.py --mode steady --duration 300 --rps 10
 alembic upgrade 0002                        # EXPAND
 python scripts/backfill_names.py            # BACKFILL
 python scripts/backfill_names.py --verify
-# set READ_NEW_NAME_FIELDS=true in .env, restart uvicorn   # SWITCH READ
+# set READ_NEW_NAME_FIELDS=true in .env, restart npm start   # SWITCH READ
 alembic upgrade 0003                        # CONTRACT (not yet written)
 ```
 
@@ -213,7 +218,7 @@ Expect exactly one `201`, nineteen `409`, one row in the database.
 | Containers: ports, volumes, init DDL | Done |
 | PostgreSQL schema: 6 tables, PK/FK/indexes | Done |
 | MongoDB: 3 collections, flexible documents | Done |
-| Seed data | 2,468 rows / 7,300 documents |
+| Seed data | 2,512 rows / 7,300 documents |
 | REST API | Done |
 | Migration history | `0001`, `0002` |
 | Expand-Contract migration run | Pending |

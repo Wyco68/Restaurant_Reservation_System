@@ -1,8 +1,12 @@
 /* TableFlow design system
  *
- * Palette: calendar blue + available green, dark by default. Type: Playfair
- * Display SC (display) over Karla (UI/body). Motion: standard, and every
- * transition is disabled under prefers-reduced-motion.
+ * Palette: calendar blue + available green, dark by default.
+ * Type: Fraunces (display) over Manrope (UI/body). Motion: standard, and
+ * every transition is disabled under prefers-reduced-motion.
+ *
+ * Interaction rule: only things you can click look clickable. Restaurant
+ * cards (.venue) carry a banner, a call to action and a hover lift; the menu
+ * (.menu-sheet) is typeset like a printed menu with none of those cues.
  *
  * Dark is the base theme; light is derived below for users who ask for it.
  * Every text/background pair below clears WCAG AA (4.5:1).
@@ -44,8 +48,8 @@
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-md: 0 6px 24px rgb(2 8 20 / 0.55);
 
-  --font-display: "Playfair Display SC", Georgia, serif;
-  --font-body: "Karla", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Fraunces", Georgia, serif;
+  --font-body: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
 
   --t-fast: 150ms;
   --t-base: 220ms;
@@ -124,7 +128,7 @@ body {
 
 h1, h2, h3 {
   font-family: var(--font-display);
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.15;
   letter-spacing: -0.01em;
   margin: 0;
@@ -243,6 +247,8 @@ main { display: block; }
 .hero {
   padding-block: var(--space-7) var(--space-6);
   text-align: center;
+  background: radial-gradient(60% 70% at 50% 0%,
+              color-mix(in srgb, var(--color-primary) 14%, transparent), transparent 70%);
 }
 .hero p {
   margin: var(--space-3) auto 0;
@@ -285,39 +291,13 @@ main { display: block; }
 }
 .stepper__sep { color: var(--color-border); }
 
-/* ---------------------------------------------------------------- cards */
+/* ----------------------------------------------------------------- grid */
 
 .grid {
   display: grid;
   gap: var(--space-3);
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
 }
-.grid--menu { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
-
-.card {
-  display: flex; flex-direction: column; gap: var(--space-1);
-  padding: var(--space-4);
-  background: var(--color-card); color: var(--color-card-fg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-  text-align: left; text-decoration: none;
-  transition: transform var(--t-base) var(--ease),
-              box-shadow var(--t-base) var(--ease),
-              border-color var(--t-base) var(--ease);
-}
-a.card, button.card { cursor: pointer; font: inherit; width: 100%; }
-a.card:hover, button.card:hover {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
-}
-
-.card__meta {
-  display: flex; align-items: center; gap: var(--space-2);
-  color: var(--color-muted-fg); font-size: 0.87rem;
-}
-.card__price { font-weight: 700; font-size: 1.05rem; margin-top: var(--space-1); }
 
 .rating { display: inline-flex; align-items: center; gap: 4px; color: var(--color-accent); font-weight: 700; }
 
@@ -327,6 +307,232 @@ a.card:hover, button.card:hover {
   background: var(--color-muted); color: var(--color-muted-fg);
   font-size: 0.78rem; font-weight: 600; white-space: nowrap;
 }
+
+/* ------------------------------------- clickable: restaurant card (.venue)
+   Every cue says "this goes somewhere": banner, call to action with an
+   arrow, pointer cursor, lift and blue border on hover. */
+
+.venue {
+  display: flex; flex-direction: column;
+  background: var(--color-card); color: var(--color-card-fg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform var(--t-base) var(--ease),
+              box-shadow var(--t-base) var(--ease),
+              border-color var(--t-base) var(--ease);
+}
+.venue:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-3px);
+}
+.venue:active { transform: translateY(-1px); }
+.venue:focus-visible { border-radius: var(--radius); }
+
+/* Decorative, so aria-hidden; the label still clears 5:1 at the worst hue. */
+.venue__banner {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  height: 92px; padding: var(--space-2) var(--space-3);
+  background: linear-gradient(135deg,
+              hsl(var(--hue) 60% 28%), hsl(calc(var(--hue) + 15) 65% 16%));
+  color: #F8FBFF;
+}
+.venue__initial {
+  font-family: var(--font-display); font-size: 3.2rem; font-weight: 600;
+  line-height: 0.9; opacity: 0.92;
+}
+.venue__cuisine {
+  padding: 3px 10px; border-radius: var(--radius-pill);
+  background: rgb(0 0 0 / 0.3);
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+}
+
+.venue__body { display: grid; gap: 6px; flex: 1; padding: var(--space-3) var(--space-4) var(--space-2); }
+.venue__name { font-family: var(--font-display); font-size: 1.3rem; font-weight: 600; }
+.venue__meta {
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+  color: var(--color-muted-fg); font-size: 0.88rem;
+}
+.venue__meta > span { display: inline-flex; align-items: center; gap: 4px; }
+
+.venue__cta {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: var(--space-2) var(--space-4) var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-primary); font-size: 0.9rem; font-weight: 700;
+}
+.venue__cta svg { transition: transform var(--t-base) var(--ease); }
+.venue:hover .venue__cta svg { transform: translateX(4px); }
+
+/* ----------------------------------------------- restaurant page head */
+
+.back-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 44px; margin-bottom: var(--space-2);
+  color: var(--color-muted-fg); font-weight: 600; font-size: 0.92rem;
+  text-decoration: none;
+}
+.back-link:hover { color: var(--color-fg); }
+
+.eyebrow {
+  margin-bottom: var(--space-2);
+  color: var(--color-primary);
+  font-size: 0.78rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+}
+
+.venue-head {
+  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
+  gap: var(--space-4);
+  padding-bottom: var(--space-5); margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+.venue-head__meta {
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  margin-top: var(--space-3); color: var(--color-muted-fg);
+}
+.venue-head__meta > span { display: inline-flex; align-items: center; gap: 5px; }
+
+/* ------------------------------------------ static: menu (.menu-sheet)
+   Typeset like a printed menu: no borders around items, no shadows, no
+   hover, default cursor. Nothing here invites a click. */
+
+.menu-sheet__head {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  gap: var(--space-2); margin-bottom: var(--space-4);
+}
+.menu-sheet__note { color: var(--color-muted-fg); font-size: 0.88rem; }
+
+.menu-sheet__columns { column-gap: var(--space-6); }
+.menu-sheet__columns > .skeleton { margin-bottom: var(--space-2); }
+@media (min-width: 768px) {
+  .menu-sheet__columns { columns: 2; column-rule: 1px solid var(--color-border); }
+}
+
+.course { break-inside: avoid; margin-bottom: var(--space-5); }
+.course__title {
+  padding-bottom: var(--space-2); margin-bottom: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-primary);
+  font-family: var(--font-display); font-size: 1.3rem; font-style: italic; font-weight: 500;
+}
+.course__list { list-style: none; margin: 0; padding: 0; }
+
+.dish {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: baseline;
+  column-gap: var(--space-2);
+  padding-block: 10px;
+  cursor: default;
+}
+.dish__name { font-weight: 600; }
+.dish__leader { border-bottom: 2px dotted var(--color-border); transform: translateY(-4px); }
+.dish__price { font-weight: 600; font-variant-numeric: tabular-nums; }
+.dish__flag { grid-column: 1 / -1; color: var(--color-muted-fg); font-size: 0.8rem; }
+.dish.is-unavailable .dish__name,
+.dish.is-unavailable .dish__price { color: var(--color-muted-fg); text-decoration: line-through; }
+
+/* ------------------------------------------------------- account page */
+
+.account {
+  display: grid; gap: var(--space-4); align-items: start;
+}
+@media (min-width: 900px) {
+  .account { grid-template-columns: 320px 1fr; gap: var(--space-5); }
+}
+
+/* Static: the profile is information, not navigation. */
+.profile { display: grid; justify-items: center; text-align: center; gap: var(--space-2); }
+.profile__avatar {
+  display: grid; place-items: center;
+  width: 72px; height: 72px; border-radius: 50%;
+  background: color-mix(in srgb, var(--color-primary) 18%, var(--color-card));
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
+  color: var(--color-fg);
+  font-family: var(--font-display); font-size: 1.6rem; font-weight: 600;
+}
+.profile__name { font-size: 1.35rem; }
+.profile__role { text-transform: capitalize; }
+.profile__details { width: 100%; margin-top: var(--space-3); text-align: left; }
+/* Label above value: a long email does not fit beside its label at 320px. */
+.profile__details .summary__row { flex-direction: column; gap: 2px; }
+.profile__details .summary__row dd { text-align: left; overflow-wrap: anywhere; }
+.profile__signout { width: 100%; margin-top: var(--space-3); }
+.profile__leave { margin-top: var(--space-1); color: var(--color-muted-fg); font-weight: 600; }
+.profile__saved { width: 100%; margin-top: var(--space-2); text-align: left; }
+.profile__form { width: 100%; margin-top: var(--space-3); gap: var(--space-3); text-align: left; }
+.profile__form-actions { display: grid; gap: var(--space-2); }
+
+.bookings__head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: var(--space-2); margin-bottom: var(--space-3);
+}
+.bookings__group {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--color-muted-fg);
+  font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.bookings__list { display: grid; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+
+/* Clickable: each booking opens its confirmation page. */
+.booking {
+  display: grid; align-items: center; gap: 4px var(--space-3);
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas: "date status arrow" "place status arrow" "meta status arrow";
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-card); color: var(--color-card-fg);
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  text-decoration: none; cursor: pointer;
+  transition: border-color var(--t-base) var(--ease), box-shadow var(--t-base) var(--ease);
+}
+.booking:hover { border-color: var(--color-primary); box-shadow: var(--shadow-md); }
+.booking:hover .booking__arrow { transform: translateX(4px); color: var(--color-primary); }
+.booking__date {
+  grid-area: date; display: inline-flex; align-items: center; gap: 6px;
+  color: var(--color-primary); font-weight: 700; font-size: 0.9rem;
+}
+.booking__place { grid-area: place; font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+.booking__meta {
+  grid-area: meta; display: inline-flex; align-items: center; gap: 6px;
+  color: var(--color-muted-fg); font-size: 0.87rem;
+}
+.booking .status { grid-area: status; }
+.booking__arrow {
+  grid-area: arrow; color: var(--color-muted-fg);
+  transition: transform var(--t-base) var(--ease), color var(--t-base) var(--ease);
+}
+.booking--past { background: transparent; }
+/* Narrow screens: the status badge drops under the details so the date
+   keeps a full line. */
+@media (max-width: 520px) {
+  .booking {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "date arrow" "place arrow" "meta arrow" "status arrow";
+  }
+  .booking .status { justify-self: start; margin-top: var(--space-1); }
+}
+.booking--past .booking__date { color: var(--color-muted-fg); }
+
+.status {
+  padding: 3px 10px; border-radius: var(--radius-pill);
+  border: 1px solid currentColor;
+  font-size: 0.75rem; font-weight: 700; text-transform: capitalize;
+}
+.status--confirmed { color: var(--color-ok); }
+.status--pending { color: var(--color-primary); }
+.status--cancelled { color: var(--color-muted-fg); }
+
+.notice {
+  display: flex; gap: var(--space-3); align-items: flex-start;
+  padding: var(--space-4);
+  border: 1px dashed var(--color-border); border-radius: var(--radius);
+  color: var(--color-muted-fg);
+}
+.notice svg { flex: none; color: var(--color-primary); }
+.notice__title { color: var(--color-fg); font-weight: 700; margin-bottom: var(--space-1); }
 
 /* staggered entrance; index supplied per item as --i */
 @media (prefers-reduced-motion: no-preference) {
@@ -407,6 +613,45 @@ input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--co
   box-shadow: var(--shadow-sm);
 }
 .panel--narrow { max-width: 560px; margin-inline: auto; }
+
+/* Two-way switch (sign in / create account). The pressed option reads as
+   selected through fill, not colour alone. */
+.segmented {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+  padding: 4px; margin-bottom: var(--space-4);
+  background: var(--color-muted);
+  border-radius: var(--radius-pill);
+}
+.segmented__option {
+  min-height: 44px;
+  font: inherit; font-size: 0.92rem; font-weight: 700;
+  color: var(--color-muted-fg);
+  background: transparent; border: 0; border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.segmented__option:hover { color: var(--color-fg); }
+.segmented__option[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--color-primary) 16%, var(--color-card));
+  color: var(--color-fg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 55%, transparent), var(--shadow-sm);
+}
+
+/* A button that reads as an inline text link. */
+.link-button {
+  padding: 0; margin: 0;
+  font: inherit; font-weight: 700;
+  color: var(--color-primary);
+  background: none; border: 0;
+  text-decoration: underline; text-underline-offset: 3px;
+  cursor: pointer;
+}
+.link-button:hover { text-decoration-thickness: 2px; }
+
+.switch-note {
+  margin-top: var(--space-4);
+  text-align: center; color: var(--color-muted-fg); font-size: 0.92rem;
+}
 
 .summary { display: grid; gap: var(--space-2); }
 .summary__row {

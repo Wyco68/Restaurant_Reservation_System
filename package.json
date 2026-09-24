@@ -1,0 +1,11 @@
+{
+  "name": "tableflow",
+  "private": true,
+  "description": "Dev launcher only. The backend is FastAPI; the web client's own package is frontend/.",
+  "scripts": {
+    "start": "node scripts/run.mjs start",
+    "seed": "node scripts/run.mjs seed",
+    "reset": "node scripts/run.mjs reset",
+    "stop": "docker compose down"
+  }
+}

@@ -1,0 +1,1 @@
+import{g as a,c as s,d as r,_ as t,b as o,t as c,j as n}from"./index-CkxuDCHU.js";const l={key:0,class:"alert alert--error",role:"alert"},p={__name:"ErrorNote",props:{message:String},setup(e){return(m,_)=>e.message?(a(),s("p",l,[r(t,{name:"alert",size:18}),o("span",null,c(e.message),1)])):n("",!0)}};export{p as _};

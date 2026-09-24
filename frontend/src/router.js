@@ -9,7 +9,7 @@ const routes = [
   { path: "/restaurants/:id", component: () => import("./pages/RestaurantDetail.vue"), meta: { title: "Menu — TableFlow" } },
   { path: "/book/:id", component: () => import("./pages/BookTable.vue"), meta: { title: "Reserve — TableFlow", requiresAuth: true } },
   { path: "/confirmation/:id", component: () => import("./pages/BookingConfirmed.vue"), meta: { title: "Confirmed — TableFlow", requiresAuth: true } },
-  { path: "/signin", component: () => import("./pages/SignInPage.vue"), meta: { title: "Sign in — TableFlow" } },
+  { path: "/signin", component: () => import("./pages/SignInPage.vue"), meta: { title: (to) => (to.query.mode === "register" ? "Create account" : "Sign in") + " — TableFlow" } },
   { path: "/account", component: () => import("./pages/AccountPage.vue"), meta: { title: "Account — TableFlow" } },
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];
@@ -32,7 +32,8 @@ router.beforeEach((to) => {
 });
 
 router.afterEach((to) => {
-  document.title = to.meta.title || "TableFlow";
+  const { title } = to.meta;
+  document.title = (typeof title === "function" ? title(to) : title) || "TableFlow";
 });
 
 export default router;

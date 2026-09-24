@@ -93,6 +93,21 @@ docker compose down && docker compose up -d
 python scripts/seed.py --verify     # counts unchanged
 ```
 
+
+### Local commands
+
+`npm start` / `seed` / `reset` / `stop` in the root `package.json` are the single entry point. Commands: [README](../README.md#quick-start).
+
+| File | Role |
+|---|---|
+| `scripts/run.mjs` | Picks a Python 3.11–3.13; falls back to `uv run --python 3.12` |
+| `scripts/dev.py` | Compose up `--wait`, `.venv`, migrations, seed, then uvicorn + vite |
+
+- **npm at the root, Python underneath.** Every member already needs Node for the client, and `npm start` is the same on PowerShell and bash. The work stays in Python, stdlib only, so it runs before the venv exists.
+- **Python version is chosen, not assumed.** The pinned `pydantic==2.10.4` and `psycopg==3.2.3` publish no 3.14 wheels; on 3.14 pip compiles `pydantic-core` from Rust source. `run.mjs` avoids that without changing the pins.
+- **Idempotent steps.** `.venv` rebuilds only when missing, built by another Python, or copied from another OS; requirements reinstall only when `requirements.txt` changes (hash stamp in `.venv`); `npm install` only when the lockfile is newer or `vite` is not executable.
+- **`start` never seeds.** Seeding and wiping are explicit (`npm run seed`, `npm run reset`); `start` only warns when `seed.py --verify` fails.
+
 ---
 
 ## Concurrency
