@@ -1,12 +1,12 @@
-"""CP2 step 1 of 5 - EXPAND: add first_name / last_name alongside guest_name.
+"""Step 1 of 5 - EXPAND: add first_name / last_name alongside guest_name.
 
-team_project.pdf p.5, the required Expand-and-Contract pattern:
+The Expand-and-Contract pattern:
 
     1. EXPAND      <- THIS MIGRATION
     2. DUAL WRITE     app/services/reservations.py::create_reservation
     3. BACKFILL       scripts/backfill_names.py
     4. SWITCH READ    READ_NEW_NAME_FIELDS=true
-    5. CONTRACT       revision 0003 (written at CP2, not before)
+    5. CONTRACT       revision 0003 (not yet written)
 
 WHY THIS IS SAFE UNDER LIVE TRAFFIC
 -----------------------------------

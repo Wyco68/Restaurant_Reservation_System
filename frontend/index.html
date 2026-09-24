@@ -2,58 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TableFlow</title>
-  <link rel="stylesheet" href="style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TableFlow — restaurant booking</title>
+  <meta name="description" content="Find a restaurant, browse the menu and reserve a table.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700&family=Playfair+Display+SC:wght@400;700&display=swap">
 </head>
 <body>
-  <header>
-    <h1>TableFlow</h1>
-    <p class="tagline">Restaurant booking &amp; ordering</p>
-    <div id="health" class="health">checking API&hellip;</div>
-  </header>
-
-  <main>
-    <section class="panel">
-      <h2>Sign in</h2>
-      <form id="login-form">
-        <input type="email" id="email" placeholder="Email" value="user0100@tableflow.test" required>
-        <input type="password" id="password" placeholder="Password" value="TableFlow123!" required>
-        <button type="submit">Sign in</button>
-      </form>
-      <p id="auth-status" class="status">Not signed in.</p>
-    </section>
-
-    <section class="panel">
-      <h2>Restaurants</h2>
-      <div class="filters">
-        <select id="filter-city"><option value="">Any city</option></select>
-        <select id="filter-cuisine"><option value="">Any cuisine</option></select>
-        <button id="search-btn" type="button">Search</button>
-      </div>
-      <div id="restaurant-list" class="cards"></div>
-      <div id="restaurant-pager" class="pager"></div>
-    </section>
-
-    <section class="panel">
-      <h2>Menu <small id="menu-context"></small></h2>
-      <div id="product-list" class="cards"></div>
-      <div id="product-pager" class="pager"></div>
-    </section>
-
-    <section class="panel">
-      <h2>Book a table</h2>
-      <form id="booking-form">
-        <input type="text" id="guest-name" placeholder="Guest name" required>
-        <input type="number" id="party-size" min="1" max="20" value="2" required>
-        <input type="datetime-local" id="starts-at" required>
-        <select id="table-select"><option value="">Pick a restaurant first</option></select>
-        <button type="submit">Reserve</button>
-      </form>
-      <p id="booking-status" class="status"></p>
-    </section>
-  </main>
-
-  <script src="app.js"></script>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div id="app"></div>
+  <script type="module" src="/src/main.js"></script>
 </body>
 </html>

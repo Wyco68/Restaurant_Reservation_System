@@ -88,7 +88,9 @@ async def create_order(session: AsyncSession, user: User, payload: OrderCreate) 
             f"Product does not belong to that restaurant: {', '.join(wrong_restaurant)}",
         )
 
-    unavailable = [pid for pid, doc in found.items() if not doc.get("is_available", True)]
+    # Fail closed: a document missing the flag is treated as unavailable.
+    # Defaulting to True would sell an item whenever the field is absent.
+    unavailable = [pid for pid, doc in found.items() if not doc.get("is_available", False)]
     if unavailable:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

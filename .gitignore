@@ -18,6 +18,13 @@ dump/
 pgdata/
 mongodata/
 
+# --- Frontend build tooling ---
+# Node is a BUILD dependency for the Vue client only. The application
+# backend is FastAPI; nothing Node-based runs at serve time.
+node_modules/
+frontend/.vite/
+*.tsbuildinfo
+
 # --- Python ---
 __pycache__/
 *.py[cod]

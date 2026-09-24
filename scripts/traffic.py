@@ -2,11 +2,11 @@
 
 Two jobs:
 
-  CP2 - prove the migration causes no downtime. Run this against
+  Migration - prove the migration causes no downtime. Run this against
         POST /api/v1/reservations while applying migration 0002 and running
         the backfill. Any non-2xx that is not a legitimate 409 is downtime.
 
-  CP3 - prove double-booking is impossible. `--mode concurrent` fires N
+  Concurrency - prove double-booking is impossible. `--mode concurrent` fires N
         simultaneous requests for the SAME table and time window. Exactly
         one must return 201; every other must return 409.
 
@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import httpx  # noqa: E402
 
 BASE_URL = "http://localhost:8000"
-EMAIL = "user0100@tableflow.test"   # a seeded customer
+EMAIL = "user0100@tableflow.io"   # a seeded customer
 PASSWORD = "TableFlow123!"          # seed-script demo password, not a secret
 
 

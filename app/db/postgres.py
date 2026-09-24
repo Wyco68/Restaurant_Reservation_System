@@ -1,10 +1,9 @@
 """PostgreSQL connection setup (async SQLAlchemy 2.x).
 
 All access goes through the ORM / Core. Raw SQL string concatenation is
-forbidden by course policy (team_project.pdf p.3) because it is an SQL
-injection vector. Where literal SQL is unavoidable (extensions, the EXCLUDE
-constraint), it is a fixed statement in a migration with no interpolated
-user input.
+banned here because it is an SQL injection vector. Where literal SQL is
+unavoidable (extensions, the EXCLUDE constraint) it is a fixed statement in
+a migration with no interpolated user input.
 """
 
 from collections.abc import AsyncGenerator

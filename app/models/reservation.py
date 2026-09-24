@@ -1,8 +1,8 @@
 """reservations - the transactional heart of the system.
 
-This table carries both course set-pieces:
-  * CP2 zero-downtime migration: guest_name -> first_name / last_name
-  * CP3 concurrency control:     the no_double_booking EXCLUDE constraint
+This table carries both hard problems:
+  * zero-downtime migration: guest_name -> first_name / last_name
+  * concurrency control:     the no_double_booking EXCLUDE constraint
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class Reservation(Base, TimestampMixin):
         nullable=False,
     )
 
-    # --- CP2 migration columns -------------------------------------------
+    # --- Migration columns -----------------------------------------------
     # guest_name is the LEGACY field, dropped at the Contract step.
     guest_name: Mapped[str] = mapped_column(String(120), nullable=False)
     # first_name / last_name are added by the Expand step. Nullable with no

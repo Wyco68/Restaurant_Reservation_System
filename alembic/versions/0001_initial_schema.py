@@ -1,8 +1,5 @@
 """Initial schema: 6 normalized tables, constraints, indexes.
 
-CP1 §2.2 requires a minimum of 3 normalized PostgreSQL tables with primary
-keys, foreign key constraints and indices. This migration creates 6.
-
 Revision ID: 0001
 Revises:
 Create Date: 2026-09-20
@@ -130,9 +127,9 @@ def upgrade() -> None:
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("restaurant_id", sa.BigInteger(), nullable=False),
         sa.Column("restaurant_table_id", sa.BigInteger(), nullable=False),
-        # CP2 migration target, BASELINE STATE: guest_name only.
+        # Migration target, BASELINE STATE: guest_name only.
         # first_name / last_name are added by revision 0002 (the Expand
-        # step) so that the Expand-Contract sequence is a real, runnable
+        # step) so the Expand-Contract sequence is a real, runnable
         # migration rather than a fait accompli. See docs/DESIGN.md.
         sa.Column("guest_name", sa.String(120), nullable=False),
         sa.Column("party_size", sa.SmallInteger(), nullable=False),

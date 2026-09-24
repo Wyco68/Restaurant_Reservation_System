@@ -1,6 +1,5 @@
 """Users router.
 
-CP1 §3 required endpoints:
     POST /api/v1/users        -> 201, PostgreSQL
     GET  /api/v1/users/{id}   -> 200, PostgreSQL
 """

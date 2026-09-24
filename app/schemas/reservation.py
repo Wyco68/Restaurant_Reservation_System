@@ -1,6 +1,6 @@
 """Reservation schemas.
 
-ReservationOut is the read path that the CP2 migration switches. See
+ReservationOut is the read path the name-split migration switches. See
 `app/services/reservations.py::to_out` - the response shape stays identical
 while the underlying column changes, which is the whole point of the
 Expand-Contract pattern.

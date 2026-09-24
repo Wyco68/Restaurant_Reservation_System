@@ -1,10 +1,6 @@
-"""Reproducible seed script (CP1 §2.3).
+"""Reproducible seed script.
 
-Requirements:
-    PostgreSQL: minimum 1,000 realistic records
-    MongoDB:    minimum 1,000 realistic documents
-
-Actual output:
+Output:
     PostgreSQL  ~2,380 rows   (200 users, 40 restaurants, 240 tables,
                                600 reservations, 400 orders, ~900 items)
     MongoDB     ~7,300 docs   (800 products, 1,500 reviews, 5,000 telemetry)
@@ -58,7 +54,7 @@ from app.models import (  # noqa: E402
     UserRole,
 )
 
-SEED = 269340
+SEED = 424242
 fake = Faker()
 Faker.seed(SEED)
 random.seed(SEED)
@@ -112,7 +108,7 @@ def seed_postgres(session: Session) -> dict[str, int]:
     # --- users ---
     users: list[User] = []
     for i in range(N_USERS):
-        email = f"user{i:04d}@tableflow.test"
+        email = f"user{i:04d}@tableflow.io"
         users.append(
             User(
                 id=uuid.uuid5(NS, email),
@@ -201,7 +197,7 @@ def seed_postgres(session: Session) -> dict[str, int]:
                 restaurant_id=restaurant.id,
                 restaurant_table_id=table.id,
                 # Dual-write from day one: the legacy column and both new
-                # columns are populated, so CP2's read switch has data to
+                # columns are populated, so the read switch has data to
                 # switch to.
                 guest_name=guest,
                 first_name=guest.split(" ")[0][:60],
@@ -277,7 +273,7 @@ def seed_mongo(db) -> dict[str, int]:
     # --- products ---
     # Attributes vary BY CATEGORY, so the collection genuinely holds
     # documents of different shapes. That is the dynamic-attribute
-    # requirement from CP1 §3, demonstrated rather than claimed.
+    # dynamic-attribute design, demonstrated rather than claimed.
     ops = []
     for i in range(N_PRODUCTS):
         category = random.choice(CATEGORIES)
@@ -332,7 +328,7 @@ def seed_mongo(db) -> dict[str, int]:
     for i in range(N_REVIEWS):
         doc = {
             "restaurant_id": (i % N_RESTAURANTS) + 1,
-            "user_id": str(uuid.uuid5(NS, f"user{random.randrange(45, N_USERS):04d}@tableflow.test")),
+            "user_id": str(uuid.uuid5(NS, f"user{random.randrange(45, N_USERS):04d}@tableflow.io")),
             "rating": random.choices([1, 2, 3, 4, 5], weights=[3, 5, 15, 40, 37])[0],
             "title": fake.sentence(nb_words=5).rstrip("."),
             "body": fake.paragraph(nb_sentences=3),
@@ -394,7 +390,7 @@ def seed_mongo(db) -> dict[str, int]:
             # column would have made awkward.
             "user_id": (
                 None if random.random() < 0.15
-                else str(uuid.uuid5(NS, f"user{random.randrange(45, N_USERS):04d}@tableflow.test"))
+                else str(uuid.uuid5(NS, f"user{random.randrange(45, N_USERS):04d}@tableflow.io"))
             ),
             "session_id": f"s_{random.randrange(16**8):08x}",
             "occurred_at": now - timedelta(minutes=random.randint(0, 60 * 24 * 30)),

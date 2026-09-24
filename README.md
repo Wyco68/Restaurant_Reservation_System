@@ -11,13 +11,19 @@ Requires Docker Desktop, Python 3.11+, Git.
 ```bash
 git clone https://github.com/Wyco68/Restaurant_Reservation_System.git
 cd Restaurant_Reservation_System
-cp .env.example .env          # then change the passwords
+cp .env.example .env          # then set the passwords and JWT_SECRET
 docker compose up -d          # wait for both to report healthy
 python -m venv .venv && .venv/Scripts/activate    # bash/zsh: source .venv/bin/activate
 pip install -r requirements.txt
 alembic upgrade head
 python scripts/seed.py
 uvicorn app.main:app --reload
+```
+
+`POSTGRES_PASSWORD`, `MONGO_PASSWORD` and `JWT_SECRET` are required — the app refuses to start without them. Generate a secret:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
 Verify:
@@ -31,9 +37,29 @@ curl http://localhost:8000/health
 |---|---|
 | API | http://localhost:8000 |
 | Interactive docs | http://localhost:8000/docs |
-| Frontend | `python -m http.server 5500 --directory frontend` |
+| Frontend | see below |
 
 **If port 5432 is already in use** (a native PostgreSQL service on the host), set `POSTGRES_PORT=5433` in `.env` and re-run `docker compose up -d`. The committed default stays 5432.
+
+### Frontend
+
+The client is a Vue 3 single-page app. A prebuilt copy is committed, so it runs with no extra tooling:
+
+```bash
+python -m http.server 5500 --directory frontend/dist
+```
+
+Open http://localhost:5500. Port 5500 is the origin the API's CORS config allows.
+
+To develop the client instead:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+`npm` is a **build-time** dependency of the web client only. The backend is FastAPI; nothing Node-based runs at serve time, and `frontend/dist` is plain static HTML, CSS and JavaScript.
 
 ---
 
@@ -53,7 +79,7 @@ File ownership and working agreement: [CONTRIBUTING.md](CONTRIBUTING.md)
 ## Architecture
 
 ```
-  Browser (vanilla JS)
+  Browser (Vue 3 SPA)
         │ HTTP/JSON
         ▼
   FastAPI  ── routers → services → models/schemas

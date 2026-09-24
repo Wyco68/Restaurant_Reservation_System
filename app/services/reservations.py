@@ -1,4 +1,4 @@
-"""Reservation logic: double-booking prevention and the CP2 read-switch.
+"""Reservation logic: double-booking prevention and the name read-switch.
 
 CONCURRENCY DESIGN
 ------------------
@@ -57,7 +57,7 @@ def split_guest_name(full: str) -> tuple[str, str]:
 def to_out(r: Reservation) -> ReservationOut:
     """Build the response body.
 
-    THIS IS THE CP2 SWITCH-READ POINT.
+    THIS IS THE SWITCH-READ POINT.
 
     The response shape is identical either way; only the source column
     changes. Rollback is flipping READ_NEW_NAME_FIELDS back to false - a
@@ -117,7 +117,7 @@ async def create_reservation(
         user_id=user.id,
         restaurant_id=payload.restaurant_id,
         restaurant_table_id=payload.restaurant_table_id,
-        # --- CP2 DUAL-WRITE ---
+        # --- DUAL-WRITE ---
         # Legacy and new columns are written together on every insert. This
         # is what lets the read switch flip safely in either direction.
         guest_name=payload.guest_name,

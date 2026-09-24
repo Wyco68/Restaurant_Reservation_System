@@ -13,13 +13,21 @@ Prerequisites:
 
 from __future__ import annotations
 
+import asyncio
+import sys
 import uuid
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from app.main import app
+# psycopg's async mode cannot run on Windows' default ProactorEventLoop.
+# Uvicorn selects a compatible policy itself; pytest does not, so set it
+# here before any loop is created.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+from app.main import app  # noqa: E402
 
 
 @pytest_asyncio.fixture
@@ -33,7 +41,7 @@ async def client() -> AsyncClient:
 @pytest.fixture
 def unique_email() -> str:
     """A fresh email per test, so reruns never collide on the UNIQUE index."""
-    return f"test_{uuid.uuid4().hex[:12]}@tableflow.test"
+    return f"test_{uuid.uuid4().hex[:12]}@tableflow.io"
 
 
 @pytest_asyncio.fixture

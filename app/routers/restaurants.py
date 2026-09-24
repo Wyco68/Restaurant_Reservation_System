@@ -42,8 +42,7 @@ async def search_restaurants(
 
     PROJECTION: selects six named columns rather than the whole entity, so
     `address` and the owner relationship are never loaded for a result list
-    (team_project.pdf p.7). This is the SQLAlchemy equivalent of EF Core's
-    .Select().
+    This is a projection: only the columns the response needs are read.
     """
     filters = []
     if city:
@@ -128,7 +127,7 @@ async def check_availability(
         return []
 
     # One query for all conflicts rather than one per table - avoiding the
-    # N+1 pattern team_project.pdf p.7 calls out.
+    # N+1 pattern.
     busy = set(
         (
             await session.scalars(

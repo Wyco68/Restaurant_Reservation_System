@@ -1,4 +1,4 @@
-"""CP2 step 3 of 5 - BACKFILL: migrate legacy guest_name into first/last.
+"""Step 3 of 5 - BACKFILL: migrate legacy guest_name into first/last.
 
 Runs WHILE the API is serving traffic. Design constraints that follow from
 that, each of which is a deliberate choice rather than an accident:

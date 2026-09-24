@@ -1,8 +1,5 @@
 """Authentication and authorization.
 
-team_project.pdf p.7 lists 401 Unauthorized among the required status codes,
-so the API needs real authentication rather than a placeholder.
-
 Passwords are hashed with bcrypt. Plaintext passwords are never stored,
 never logged, and never returned in a response.
 """

@@ -6,6 +6,7 @@ into source.
 
 from functools import lru_cache
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,19 +18,23 @@ class Settings(BaseSettings):
     # --- PostgreSQL ---
     postgres_db: str = "tableflow"
     postgres_user: str = "dev_user"
-    postgres_password: str = ""
+    # No default. A missing POSTGRES_PASSWORD must fail at startup rather
+    # than silently attempting a blank-password connection.
+    postgres_password: str = Field(min_length=1)
     postgres_host: str = "localhost"
     postgres_port: int = 5432
 
     # --- MongoDB ---
     mongo_db: str = "tableflow"
     mongo_user: str = "dev_user"
-    mongo_password: str = ""
+    mongo_password: str = Field(min_length=1)
     mongo_host: str = "localhost"
     mongo_port: int = 27017
 
     # --- Auth ---
-    jwt_secret: str = ""
+    # No default, and a length floor: a short or empty HMAC key makes every
+    # token in the system forgeable.
+    jwt_secret: str = Field(min_length=32)
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
 
@@ -41,6 +46,22 @@ class Settings(BaseSettings):
     # Flipping this is the SWITCH READ step of the Expand-Contract migration.
     # Rollback is a flag flip, not a redeploy.
     read_new_name_fields: bool = False
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def reject_placeholder_secret(cls, v: str) -> str:
+        """Refuse to start on a secret that was never changed.
+
+        The .env.example ships a placeholder so a fresh clone runs. Shipping
+        that same placeholder anywhere real would mean anyone holding the
+        repository can mint valid tokens.
+        """
+        if "change_me" in v.lower() or "dev_only" in v.lower():
+            raise ValueError(
+                "JWT_SECRET is still the placeholder from .env.example. "
+                "Generate one: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+            )
+        return v
 
     @property
     def postgres_dsn(self) -> str:

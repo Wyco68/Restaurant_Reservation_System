@@ -35,7 +35,7 @@ Deferred, not deleted: `opening_hours`, `order_status_history`, analytics endpoi
 | Backend | Python / FastAPI |
 | Relational | PostgreSQL 15 |
 | Document | MongoDB 6.0 |
-| Frontend | Vanilla JS / HTML5 |
+| Frontend | Vue 3 + Vue Router (Vite build) |
 | ORM | SQLAlchemy 2.x + Alembic |
 | Drivers | psycopg 3, Motor |
 | Containers | Docker Compose |
@@ -59,7 +59,7 @@ app/
 alembic/versions/  every schema change, forward and reverse
 scripts/           operational tooling run by a human
 tests/             integration tests against the real engines
-frontend/          vanilla JS
+frontend/          Vue 3 SPA: src/pages one file per route, dist/ prebuilt
 ```
 
 Routers hold HTTP concerns and simple CRUD; services hold logic that is genuinely multi-step.

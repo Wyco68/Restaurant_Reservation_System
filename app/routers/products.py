@@ -1,6 +1,5 @@
 """Products router (MongoDB).
 
-CP1 §3 required endpoints:
     GET  /api/v1/products   -> 200, paginated catalogue
     POST /api/v1/products   -> 201, dynamic attributes
 """
@@ -48,9 +47,8 @@ async def list_products(
 
     PROJECTION: the second argument to find() lists exactly the fields
     ProductSummary needs. `description` and `attributes` are never read off
-    disk for a list request (team_project.pdf p.7 - projections over eager
-    loading). Fetching the full documents here would move megabytes to
-    render a menu list.
+    disk for a list request. Fetching the full documents here would move
+    megabytes to render a menu list.
     """
     query: dict[str, Any] = {}
     if restaurant_id is not None:
@@ -123,8 +121,7 @@ async def create_product(payload: ProductCreate) -> ProductOut:
 
     `attributes` is stored verbatim. A curry sends spice_level and protein;
     a pizza sends size, crust and toppings[]. Both land in the same
-    collection with no schema change, which is the requirement CP1 §3 is
-    testing.
+    collection with no schema change.
 
     Staff/admin only - an open catalogue-write endpoint is a defacement API.
     """

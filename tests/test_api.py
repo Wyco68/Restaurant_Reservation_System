@@ -1,7 +1,7 @@
-"""Checkpoint 1 acceptance tests.
+"""API acceptance tests.
 
-Covers every endpoint CP1 §3 requires, plus the status codes the course
-documents name: 200, 201, 400, 401, 404, 409.
+Covers every core endpoint and the full status-code surface:
+200, 201, 400, 401, 403, 404, 409, 422.
 """
 
 from __future__ import annotations
@@ -11,8 +11,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
-
-pytestmark = pytest.mark.asyncio
 
 
 # ----------------------------------------------------------------- health
@@ -105,8 +103,7 @@ async def test_products_are_paginated(client: AsyncClient):
 async def test_product_list_is_projected(client: AsyncClient):
     """List view must not carry description or attributes.
 
-    This is the projection requirement from team_project.pdf p.7 asserted
-    as a test rather than trusted as a convention.
+    Asserted as a test rather than trusted as a convention.
     """
     r = await client.get("/api/v1/products?limit=1")
     items = r.json()["items"]

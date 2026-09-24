@@ -1,8 +1,8 @@
 """Product schemas (MongoDB).
 
-The `attributes` field is where CP1 §3's "dynamic attributes" requirement
-lives. It is typed as an open dict on purpose: constraining its keys would
-recreate the relational rigidity the document store exists to avoid.
+The `attributes` field is typed as an open dict on purpose: constraining its
+keys would recreate the relational rigidity the document store exists to
+avoid.
 """
 
 from __future__ import annotations
@@ -51,8 +51,7 @@ class ProductSummary(BaseModel):
 
     GET /products returns this, not ProductOut. The Mongo query uses an
     explicit projection so `description` and `attributes` are never pulled
-    off disk for a list request (team_project.pdf p.7: projections over
-    eager loading).
+    off disk for a list request.
     """
 
     model_config = ConfigDict(populate_by_name=True)

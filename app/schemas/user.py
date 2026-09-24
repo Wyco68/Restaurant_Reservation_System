@@ -1,8 +1,8 @@
 """User request/response schemas.
 
-Server-side validation (team_project.pdf p.7: never rely on client checks).
-Pydantic rejects a malformed payload before any handler code runs, which is
-what produces the 422/400 responses.
+Server-side validation: never rely on client checks. Pydantic rejects a
+malformed payload before any handler code runs, which is what produces the
+422/400 responses.
 """
 
 from __future__ import annotations
