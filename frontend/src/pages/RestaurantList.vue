@@ -5,6 +5,7 @@ import { api, CITIES, CUISINES } from "../api.js";
 import BaseIcon from "../components/BaseIcon.vue";
 import FlowStepper from "../components/FlowStepper.vue";
 import PagerNav from "../components/PagerNav.vue";
+import RestaurantCard from "../components/RestaurantCard.vue";
 import ErrorNote from "../components/ErrorNote.vue";
 
 const route = useRoute();
@@ -96,17 +97,8 @@ onMounted(() => load(Number(route.query.page) || 1));
     </p>
 
     <div v-else class="grid stagger">
-      <router-link v-for="(r, i) in page.items" :key="r.id"
-                   :to="`/restaurants/${r.id}`" class="card" :style="{ '--i': i }">
-        <h3>{{ r.name }}</h3>
-        <span class="card__meta">
-          <BaseIcon name="pin" :size="15" /> {{ r.city }} · {{ r.cuisine }}
-        </span>
-        <span class="card__meta">
-          <span class="rating"><BaseIcon name="star" :size="15" /> {{ r.avg_rating ?? "–" }}</span>
-          <span>{{ "$".repeat(r.price_range) }}</span>
-        </span>
-      </router-link>
+      <RestaurantCard v-for="(r, i) in page.items" :key="r.id"
+                      :restaurant="r" :style="{ '--i': i }" />
     </div>
 
     <PagerNav :page="page.page" :pages="page.pages" :total="page.total"

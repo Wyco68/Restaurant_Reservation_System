@@ -58,6 +58,16 @@ export async function signIn(email, password) {
   return state.user;
 }
 
+// Registration returns the new user but no token, so sign straight in
+// afterwards; the user should not have to type the same password twice.
+export async function register({ email, password, full_name, phone }) {
+  await api("/api/v1/users", {
+    method: "POST",
+    body: JSON.stringify({ email, password, full_name, phone: phone || null }),
+  });
+  return signIn(email, password);
+}
+
 export function signOut() {
   state.token = null;
   state.user = null;

@@ -1,18 +1,32 @@
 <script setup>
-import { onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api, money } from "../api.js";
 import BaseIcon from "../components/BaseIcon.vue";
 import FlowStepper from "../components/FlowStepper.vue";
-import PagerNav from "../components/PagerNav.vue";
 import ErrorNote from "../components/ErrorNote.vue";
 
 const route = useRoute();
 const restaurant = ref(null);
-const menu = reactive({ items: [], page: 1, pages: 0, total: 0 });
+const menu = ref([]);
 const loading = ref(true);
 const menuBusy = ref(false);
 const error = ref("");
+
+// Printed-menu order, not alphabetical.
+const COURSE_ORDER = ["Starter", "Main", "Side", "Dessert", "Drink"];
+
+const courses = computed(() => {
+  const groups = new Map();
+  for (const item of menu.value) {
+    if (!groups.has(item.category)) groups.set(item.category, []);
+    groups.get(item.category).push(item);
+  }
+  const rank = (c) => (COURSE_ORDER.indexOf(c) + 1) || COURSE_ORDER.length + 1;
+  return [...groups.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([name, items]) => ({ name, items }));
+});
 
 async function loadRestaurant() {
   loading.value = true;
@@ -27,14 +41,15 @@ async function loadRestaurant() {
   }
 }
 
-async function loadMenu(p = 1) {
+// A menu is read as a whole, so it loads in one request (the API caps
+// `limit` at 100; seeded restaurants carry ~20 items) instead of paging.
+async function loadMenu() {
   menuBusy.value = true;
   try {
-    Object.assign(menu, await api(
-      `/api/v1/products?restaurant_id=${route.params.id}&page=${p}&limit=8`
-    ));
+    const data = await api(`/api/v1/products?restaurant_id=${route.params.id}&limit=100`);
+    menu.value = data.items;
   } catch {
-    Object.assign(menu, { items: [], page: 1, pages: 0, total: 0 });
+    menu.value = [];
   } finally {
     menuBusy.value = false;
   }
@@ -42,7 +57,7 @@ async function loadMenu(p = 1) {
 
 function reload() {
   loadRestaurant();
-  loadMenu(1);
+  loadMenu();
 }
 
 onMounted(reload);
@@ -54,49 +69,59 @@ watch(() => route.params.id, reload);
     <FlowStepper :current="1" />
     <ErrorNote :message="error" />
 
-    <div v-if="loading" class="skeleton" style="height: 120px" />
+    <div v-if="loading" class="skeleton" style="height: 160px" />
 
     <template v-else-if="restaurant">
-      <div class="page-head">
-        <h1>{{ restaurant.name }}</h1>
-        <p>
-          {{ restaurant.cuisine }} · {{ restaurant.city }} ·
-          {{ "$".repeat(restaurant.price_range) }}
-          <span v-if="restaurant.avg_rating" class="rating">
-            <BaseIcon name="star" :size="15" /> {{ restaurant.avg_rating }}
-          </span>
-        </p>
-        <p>{{ restaurant.address }}</p>
-      </div>
+      <router-link class="back-link" to="/restaurants">
+        <BaseIcon name="arrowLeft" :size="16" /> All restaurants
+      </router-link>
 
-      <div class="actions" style="margin-bottom: var(--space-6)">
+      <header class="venue-head">
+        <div>
+          <p class="eyebrow">{{ restaurant.cuisine }} · {{ restaurant.city }}</p>
+          <h1>{{ restaurant.name }}</h1>
+          <p class="venue-head__meta">
+            <span v-if="restaurant.avg_rating" class="rating">
+              <BaseIcon name="star" :size="16" /> {{ restaurant.avg_rating }}
+            </span>
+            <span>{{ "$".repeat(restaurant.price_range) }}</span>
+            <span><BaseIcon name="pin" :size="15" /> {{ restaurant.address }}</span>
+          </p>
+        </div>
         <router-link class="btn btn--primary btn--lg" :to="`/book/${restaurant.id}`">
           Book a table <BaseIcon name="arrowRight" :size="18" />
         </router-link>
-        <router-link class="btn btn--ghost" to="/restaurants">
-          <BaseIcon name="arrowLeft" :size="16" /> All restaurants
-        </router-link>
-      </div>
+      </header>
 
-      <h2>Menu</h2>
-      <p class="field__hint" style="margin-bottom: var(--space-3)">{{ menu.total }} items</p>
+      <!-- Read-only by design: no borders, hover states or pointer cursor,
+           so nothing here competes with the booking button. -->
+      <section class="menu-sheet" aria-labelledby="menu-title">
+        <div class="menu-sheet__head">
+          <h2 id="menu-title">Menu</h2>
+          <span class="menu-sheet__note">{{ menu.length }} dishes</span>
+        </div>
 
-      <div v-if="menuBusy" class="grid grid--menu">
-        <div v-for="n in 4" :key="n" class="skeleton" style="min-height: 96px" />
-      </div>
+        <div v-if="menuBusy" class="menu-sheet__columns" aria-busy="true">
+          <div v-for="n in 6" :key="n" class="skeleton" style="min-height: 28px" />
+        </div>
 
-      <p v-else-if="!menu.items.length" class="empty">No menu items published yet.</p>
+        <p v-else-if="!menu.length" class="empty">No menu published yet.</p>
 
-      <div v-else class="grid grid--menu stagger">
-        <article v-for="(p, i) in menu.items" :key="p._id" class="card" :style="{ '--i': i }">
-          <h3>{{ p.name }}</h3>
-          <span class="pill">{{ p.category }}</span>
-          <span class="card__price">{{ money(p.price, p.currency) }}</span>
-        </article>
-      </div>
-
-      <PagerNav :page="menu.page" :pages="menu.pages" :total="menu.total"
-                :busy="menuBusy" @go="loadMenu" />
+        <div v-else class="menu-sheet__columns">
+          <section v-for="course in courses" :key="course.name" class="course">
+            <h3 class="course__title">{{ course.name }}</h3>
+            <ul class="course__list">
+              <li v-for="item in course.items" :key="item._id" class="dish"
+                  :class="{ 'is-unavailable': item.is_available === false }">
+                <span class="dish__name">{{ item.name }}</span>
+                <span class="dish__leader" aria-hidden="true" />
+                <span class="dish__price">{{ money(item.price, item.currency) }}</span>
+                <span v-if="item.is_available === false" class="dish__flag">Sold out today</span>
+              </li>
+            </ul>
+          </section>
+        </div>
+      </section>
     </template>
 
     <p v-else class="empty">Restaurant not found.</p>
