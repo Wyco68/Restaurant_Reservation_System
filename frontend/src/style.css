@@ -435,6 +435,105 @@ main { display: block; }
 .dish.is-unavailable .dish__name,
 .dish.is-unavailable .dish__price { color: var(--color-muted-fg); text-decoration: line-through; }
 
+/* ------------------------------------------------------- account page */
+
+.account {
+  display: grid; gap: var(--space-4); align-items: start;
+}
+@media (min-width: 900px) {
+  .account { grid-template-columns: 320px 1fr; gap: var(--space-5); }
+}
+
+/* Static: the profile is information, not navigation. */
+.profile { display: grid; justify-items: center; text-align: center; gap: var(--space-2); }
+.profile__avatar {
+  display: grid; place-items: center;
+  width: 72px; height: 72px; border-radius: 50%;
+  background: color-mix(in srgb, var(--color-primary) 18%, var(--color-card));
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
+  color: var(--color-fg);
+  font-family: var(--font-display); font-size: 1.6rem; font-weight: 600;
+}
+.profile__name { font-size: 1.35rem; }
+.profile__role { text-transform: capitalize; }
+.profile__details { width: 100%; margin-top: var(--space-3); text-align: left; }
+/* Label above value: a long email does not fit beside its label at 320px. */
+.profile__details .summary__row { flex-direction: column; gap: 2px; }
+.profile__details .summary__row dd { text-align: left; overflow-wrap: anywhere; }
+.profile__signout { width: 100%; margin-top: var(--space-3); }
+.profile__leave { margin-top: var(--space-1); color: var(--color-muted-fg); font-weight: 600; }
+.profile__saved { width: 100%; margin-top: var(--space-2); text-align: left; }
+.profile__form { width: 100%; margin-top: var(--space-3); gap: var(--space-3); text-align: left; }
+.profile__form-actions { display: grid; gap: var(--space-2); }
+
+.bookings__head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: var(--space-2); margin-bottom: var(--space-3);
+}
+.bookings__group {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--color-muted-fg);
+  font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.bookings__list { display: grid; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+
+/* Clickable: each booking opens its confirmation page. */
+.booking {
+  display: grid; align-items: center; gap: 4px var(--space-3);
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas: "date status arrow" "place status arrow" "meta status arrow";
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-card); color: var(--color-card-fg);
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  text-decoration: none; cursor: pointer;
+  transition: border-color var(--t-base) var(--ease), box-shadow var(--t-base) var(--ease);
+}
+.booking:hover { border-color: var(--color-primary); box-shadow: var(--shadow-md); }
+.booking:hover .booking__arrow { transform: translateX(4px); color: var(--color-primary); }
+.booking__date {
+  grid-area: date; display: inline-flex; align-items: center; gap: 6px;
+  color: var(--color-primary); font-weight: 700; font-size: 0.9rem;
+}
+.booking__place { grid-area: place; font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+.booking__meta {
+  grid-area: meta; display: inline-flex; align-items: center; gap: 6px;
+  color: var(--color-muted-fg); font-size: 0.87rem;
+}
+.booking .status { grid-area: status; }
+.booking__arrow {
+  grid-area: arrow; color: var(--color-muted-fg);
+  transition: transform var(--t-base) var(--ease), color var(--t-base) var(--ease);
+}
+.booking--past { background: transparent; }
+/* Narrow screens: the status badge drops under the details so the date
+   keeps a full line. */
+@media (max-width: 520px) {
+  .booking {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "date arrow" "place arrow" "meta arrow" "status arrow";
+  }
+  .booking .status { justify-self: start; margin-top: var(--space-1); }
+}
+.booking--past .booking__date { color: var(--color-muted-fg); }
+
+.status {
+  padding: 3px 10px; border-radius: var(--radius-pill);
+  border: 1px solid currentColor;
+  font-size: 0.75rem; font-weight: 700; text-transform: capitalize;
+}
+.status--confirmed { color: var(--color-ok); }
+.status--pending { color: var(--color-primary); }
+.status--cancelled { color: var(--color-muted-fg); }
+
+.notice {
+  display: flex; gap: var(--space-3); align-items: flex-start;
+  padding: var(--space-4);
+  border: 1px dashed var(--color-border); border-radius: var(--radius);
+  color: var(--color-muted-fg);
+}
+.notice svg { flex: none; color: var(--color-primary); }
+.notice__title { color: var(--color-fg); font-weight: 700; margin-bottom: var(--space-1); }
+
 /* staggered entrance; index supplied per item as --i */
 @media (prefers-reduced-motion: no-preference) {
   .stagger > * {

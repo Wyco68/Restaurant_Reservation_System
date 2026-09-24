@@ -68,6 +68,15 @@ export async function register({ email, password, full_name, phone }) {
   return signIn(email, password);
 }
 
+// Sends only the fields that changed; the server leaves the rest untouched.
+export async function updateProfile(changes) {
+  state.user = await api("/api/v1/users/me", {
+    method: "PATCH",
+    body: JSON.stringify(changes),
+  });
+  return state.user;
+}
+
 export function signOut() {
   state.token = null;
   state.user = null;
