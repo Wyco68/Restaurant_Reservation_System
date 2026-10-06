@@ -35,7 +35,7 @@ export default {
       tableId: "",
       guestName: "",
     });
-    const errors = reactive({ guestName: "", tableId: "" });
+    const errors = reactive({ guestName: "", tableId: "", partySize: "" });
     const formError = ref("");
     const tablesBusy = ref(false);
     const submitting = ref(false);
@@ -50,8 +50,21 @@ export default {
       }
     }
 
+    // Same bounds as the API (1-20). A cleared field would otherwise be sent
+    // as party_size= and come back 422, shown as "no tables free".
+    function checkPartySize() {
+      const n = form.partySize;
+      errors.partySize = Number.isInteger(n) && n >= 1 && n <= 20 ? "" : "Enter 1 to 20 guests.";
+      return !errors.partySize;
+    }
+
     async function loadTables() {
       if (!form.startsAt) return;
+      if (!checkPartySize()) {
+        tables.value = [];
+        form.tableId = "";
+        return;
+      }
       tablesBusy.value = true;
       const { start, end } = windowFor(form.startsAt);
       try {
@@ -85,7 +98,7 @@ export default {
       errors.guestName =
         form.guestName.trim().length < 2 ? "Enter the name the table is booked under." : "";
       errors.tableId = form.tableId ? "" : "Choose an available table.";
-      return !errors.guestName && !errors.tableId;
+      return checkPartySize() && !errors.guestName && !errors.tableId;
     }
 
     async function submit() {
@@ -155,8 +168,13 @@ export default {
             <div class="field">
               <label for="b-party">Guests</label>
               <input id="b-party" v-model.number="form.partySize" type="number"
-                     min="1" max="20" required>
-              <span class="field__hint">1 to 20</span>
+                     min="1" max="20" required
+                     :aria-invalid="errors.partySize ? 'true' : 'false'"
+                     :aria-describedby="errors.partySize ? 'b-party-error' : undefined">
+              <span v-if="errors.partySize" id="b-party-error" class="field__error">
+                {{ errors.partySize }}
+              </span>
+              <span v-else class="field__hint">1 to 20</span>
             </div>
           </div>
 
@@ -167,6 +185,7 @@ export default {
                     :aria-describedby="errors.tableId ? 'b-table-error' : 'b-table-hint'">
               <option value="" disabled>
                 {{ tablesBusy ? "Checking availability…"
+                   : errors.partySize ? "Enter the number of guests first"
                    : available.length ? "Select a table"
                    : "No tables free at that time" }}
               </option>
