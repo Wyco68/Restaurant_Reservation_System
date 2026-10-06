@@ -43,23 +43,13 @@ curl http://localhost:8000/health
 
 ### Frontend
 
-The client is a Vue 3 single-page app. A prebuilt copy is committed, so it runs with no extra tooling:
-
 ```bash
-python -m http.server 5500 --directory frontend/dist
+python -m http.server 5500 --directory frontend
 ```
 
 Open http://localhost:5500. Port 5500 is the origin the API's CORS config allows.
 
-To develop the client instead:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-`npm` is a **build-time** dependency of the web client only. The backend is FastAPI; nothing Node-based runs at serve time, and `frontend/dist` is plain static HTML, CSS and JavaScript.
+No build step and no Node: edit a file in `frontend/src/`, reload the page.
 
 ---
 

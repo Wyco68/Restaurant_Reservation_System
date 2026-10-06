@@ -1,14 +1,7 @@
-<script setup>
 import { computed } from "vue";
 
 /* Inline SVG (Lucide-style geometry). Never emoji-as-icon: emoji render
    differently per platform and screen readers announce them as words. */
-const props = defineProps({
-  name: { type: String, required: true },
-  size: { type: Number, default: 18 },
-  label: { type: String, default: "" },
-});
-
 const PATHS = {
   utensils: '<path d="M3 2v7a3 3 0 0 0 3 3v10"/><path d="M6 2v6"/><path d="M9 2v6"/><path d="M17 2c-1.7 1.4-2.5 4-2.5 7 0 2 .5 3 2.5 3v10"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
@@ -22,13 +15,22 @@ const PATHS = {
   logIn: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/>',
 };
 
-const paths = computed(() => PATHS[props.name] || "");
-</script>
-
-<template>
-  <svg :width="size" :height="size" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-       stroke-linejoin="round" :aria-hidden="label ? 'false' : 'true'"
-       :role="label ? 'img' : undefined" :aria-label="label || undefined"
-       v-html="paths" />
-</template>
+export default {
+  name: "BaseIcon",
+  props: {
+    name: { type: String, required: true },
+    size: { type: Number, default: 18 },
+    label: { type: String, default: "" },
+  },
+  setup(props) {
+    const paths = computed(() => PATHS[props.name] || "");
+    return { paths };
+  },
+  template: `
+    <svg :width="size" :height="size" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+         stroke-linejoin="round" :aria-hidden="label ? 'false' : 'true'"
+         :role="label ? 'img' : undefined" :aria-label="label || undefined"
+         v-html="paths" />
+  `,
+};

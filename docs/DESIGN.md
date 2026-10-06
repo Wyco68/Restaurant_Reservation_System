@@ -35,7 +35,7 @@ Deferred, not deleted: `opening_hours`, `order_status_history`, analytics endpoi
 | Backend | Python / FastAPI |
 | Relational | PostgreSQL 15 |
 | Document | MongoDB 6.0 |
-| Frontend | Vue 3 + Vue Router (Vite build) |
+| Frontend | Vue 3 + Vue Router, native ES modules, no build step |
 | ORM | SQLAlchemy 2.x + Alembic |
 | Drivers | psycopg 3, Motor |
 | Containers | Docker Compose |
@@ -59,8 +59,10 @@ app/
 alembic/versions/  every schema change, forward and reverse
 scripts/           operational tooling run by a human
 tests/             integration tests against the real engines
-frontend/          Vue 3 SPA: src/pages one file per route, dist/ prebuilt
+frontend/          Vue 3 SPA: src/pages one module per route, vendor/ Vue + Vue Router
 ```
+
+**Frontend without Node.** Node.js is forbidden by `team_project.pdf` p.3, so the client has no build step. Components are plain ES modules with string templates compiled in the browser; an import map in `index.html` resolves `vue` and `vue-router` to the browser builds in `frontend/vendor/`. They are vendored, not loaded from a CDN, so the demo runs without network (`team_project.pdf` p.9).
 
 Routers hold HTTP concerns and simple CRUD; services hold logic that is genuinely multi-step.
 

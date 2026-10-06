@@ -10,10 +10,22 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700&family=Playfair+Display+SC:wght@400;700&display=swap">
+  <link rel="stylesheet" href="./src/style.css">
+
+  <!-- No build step: the browser resolves bare imports through this map.
+       Vue and Vue Router are vendored so the client runs with no network. -->
+  <script type="importmap">
+    {
+      "imports": {
+        "vue": "./vendor/vue.esm-browser.prod.js",
+        "vue-router": "./vendor/vue-router.esm-browser.prod.js"
+      }
+    }
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <div id="app"></div>
-  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="./src/main.js"></script>
 </body>
 </html>
