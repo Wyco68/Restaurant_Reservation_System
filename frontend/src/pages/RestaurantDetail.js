@@ -85,19 +85,23 @@ export default {
         <h2>Menu</h2>
         <p class="field__hint" style="margin-bottom: var(--space-3)">{{ menu.total }} items</p>
 
-        <div v-if="menuBusy" class="grid grid--menu">
-          <div v-for="n in 4" :key="n" class="skeleton" style="min-height: 96px" />
-        </div>
+        <div v-if="menuBusy" class="skeleton" style="min-height: 280px" />
 
         <p v-else-if="!menu.items.length" class="empty">No menu items published yet.</p>
 
-        <div v-else class="grid grid--menu stagger">
-          <article v-for="(p, i) in menu.items" :key="p._id" class="card" :style="{ '--i': i }">
-            <h3>{{ p.name }}</h3>
-            <span class="pill">{{ p.category }}</span>
-            <span class="card__price">{{ money(p.price, p.currency) }}</span>
-          </article>
-        </div>
+        <ul v-else class="menu-list stagger">
+          <li v-for="(p, i) in menu.items" :key="p._id" class="menu-item"
+              :class="{ 'is-unavailable': p.is_available === false }" :style="{ '--i': i }">
+            <div class="menu-item__line">
+              <span class="menu-item__name">{{ p.name }}</span>
+              <span class="menu-item__leader" aria-hidden="true" />
+              <span class="menu-item__price">{{ money(p.price, p.currency) }}</span>
+            </div>
+            <span class="menu-item__category">
+              {{ p.category }}<template v-if="p.is_available === false"> · Unavailable</template>
+            </span>
+          </li>
+        </ul>
 
         <PagerNav :page="menu.page" :pages="menu.pages" :total="menu.total"
                   :busy="menuBusy" @go="loadMenu" />
