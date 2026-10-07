@@ -100,9 +100,9 @@ Target of both the name-split migration and the concurrency work.
 | `user_id` | `UUID` | NO | **FK users(id)** RESTRICT |
 | `restaurant_id` | `BIGINT` | NO | **FK restaurants(id)** CASCADE |
 | `restaurant_table_id` | `BIGINT` | NO | **FK restaurant_tables(id)** RESTRICT |
-| `guest_name` | `VARCHAR(120)` | NO | **legacy — dropped at the Contract step** |
-| `first_name` | `VARCHAR(60)` | YES | added by migration `0002` |
-| `last_name` | `VARCHAR(60)` | YES | added by migration `0002` |
+| `guest_name` | `VARCHAR(120)` | NO → YES → dropped | **legacy** — nullable from `0003`, dropped by `0004` |
+| `first_name` | `VARCHAR(60)` | YES → NO | added by `0002`; NOT NULL from `0004` |
+| `last_name` | `VARCHAR(60)` | YES → NO | added by `0002`; NOT NULL from `0004` |
 | `party_size` | `SMALLINT` | NO | |
 | `starts_at` | `TIMESTAMPTZ` | NO | |
 | `ends_at` | `TIMESTAMPTZ` | NO | |
@@ -123,9 +123,9 @@ ALTER TABLE reservations
 
 No two non-cancelled reservations may share a table and overlap in time. The half-open range means back-to-back seatings do not clash: a booking ending 19:00 and one starting 19:00 are fine. The `WHERE` clause lets a cancellation free the slot. Concurrent inserts: one commits, the rest raise `IntegrityError`, which the service maps to `409`.
 
-Indexes: `no_double_booking` (GiST), `idx_reservations_user (user_id, starts_at DESC)`, `idx_reservations_restaurant_time (restaurant_id, starts_at)`, `idx_reservations_backfill (id) WHERE first_name IS NULL` (migration only)
+Indexes: `no_double_booking` (GiST), `idx_reservations_user (user_id, starts_at DESC)`, `idx_reservations_restaurant_time (restaurant_id, starts_at)`, `idx_reservations_backfill (id) WHERE first_name IS NULL` (`0002`–`0003` only)
 
-`first_name` and `last_name` are nullable with no default so adding them is metadata-only — no table rewrite, no long lock. See [DESIGN.md](DESIGN.md#migration).
+`first_name` and `last_name` are added nullable with no default so adding them is metadata-only — no table rewrite, no long lock. Each step: [DESIGN.md](DESIGN.md#migration).
 
 ### orders
 

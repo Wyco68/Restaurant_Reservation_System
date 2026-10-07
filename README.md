@@ -110,10 +110,13 @@ Base `/api/v1`. Full reference with examples: [docs/API_CONTRACT.md](docs/API_CO
 | `GET` | `/products` | Mongo | — |
 | `POST` | `/products` | Mongo | staff |
 | `POST` | `/reservations` | PG | bearer |
+| `GET` | `/reservations` | PG | bearer |
+| `PATCH` | `/reservations/{id}` | PG | bearer |
 | `DELETE` | `/reservations/{id}` | PG | bearer |
 | `POST` | `/orders` | **PG + Mongo** | bearer |
 | `PATCH` | `/orders/{id}/status` | PG | staff |
 | `GET` | `/health` | both | — |
+| `PUT` | `/admin/migration` | PG | admin |
 
 Status codes: `200` `201` `400` `401` `403` `404` `409` `422`
 
@@ -124,7 +127,7 @@ Status codes: `200` `201` `400` `401` `403` `404` `409` `422`
 ### Migrations
 
 ```bash
-alembic upgrade head          # apply all
+alembic upgrade head          # apply all - ends with guest_name dropped (0004)
 alembic upgrade 0001          # apply to a revision
 alembic downgrade -1          # roll back one
 alembic current               # show current revision
@@ -137,6 +140,7 @@ alembic history --verbose     # show history
 python scripts/seed.py            # seed; skips if populated
 python scripts/seed.py --reset    # wipe and reseed
 python scripts/seed.py --verify   # count only
+python scripts/seed.py --reset --reservations 20000   # CP2 demo volume
 ```
 
 Produces ~2,468 PostgreSQL rows and ~7,300 MongoDB documents.
@@ -161,19 +165,24 @@ python scripts/seed.py
 
 ### Zero-downtime migration
 
-```bash
-# terminal 1
-python scripts/traffic.py --mode steady --duration 300 --rps 10
+Five Expand-Contract steps under live traffic, no restart. Proof to check after each step, rollback, troubleshooting: [docs/MIGRATION.md](docs/MIGRATION.md).
 
-# terminal 2
-alembic upgrade 0002                        # EXPAND
-python scripts/backfill_names.py            # BACKFILL
-python scripts/backfill_names.py --verify
-# set READ_NEW_NAME_FIELDS=true in .env, restart uvicorn   # SWITCH READ
-alembic upgrade 0003                        # CONTRACT (not yet written)
+```bash
+alembic downgrade 0001                                 # reset to the legacy schema
+python scripts/seed.py --reset --reservations 20000
+uvicorn app.main:app                                   # terminal 1: one worker, no --reload
+python scripts/traffic.py --rps 25                     # terminal 2: leave running
+
+alembic upgrade 0002                                   # 1 EXPAND
+python scripts/phase.py dual_write                     # 2 DUAL WRITE
+python scripts/backfill_names.py                       # 3 BACKFILL (verifies at the end)
+python scripts/phase.py read_new                       # 4 SWITCH READ
+alembic upgrade 0003                                   # 5 CONTRACT: guest_name nullable
+python scripts/phase.py new_only                       #   stop writing guest_name
+alembic upgrade 0004                                   #   drop guest_name
 ```
 
-Terminal 1 must show zero failed requests. Procedure and rollback: [docs/DESIGN.md](docs/DESIGN.md#migration)
+`Ctrl+C` terminal 2: every check must print `PASS` — 0 5xx, 0 rejected, 0 connection errors, 0 wrong names, p99 < 500 ms.
 
 ### Concurrency proof
 
@@ -192,6 +201,7 @@ Expect exactly one `201`, nineteen `409`, one row in the database.
 | [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Tables, columns, constraints, indexes, collections |
 | [docs/API_CONTRACT.md](docs/API_CONTRACT.md) | Every endpoint with request/response examples |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture decisions and trade-offs |
+| [docs/MIGRATION.md](docs/MIGRATION.md) | Running the zero-downtime migration (CP2 demo) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Branching, commits, ownership, schedule |
 
 ---
@@ -205,6 +215,6 @@ Expect exactly one `201`, nineteen `409`, one row in the database.
 | MongoDB: 3 collections, flexible documents | Done |
 | Seed data | 2,468 rows / 7,300 documents |
 | REST API | Done |
-| Migration history | `0001`, `0002` |
-| Expand-Contract migration run | Pending |
-| Load testing | Pending |
+| Migration history | `0001`–`0004` |
+| Expand-Contract migration run | Rehearsed twice at 25 req/s: 0 failures, p99 29–87 ms |
+| Concurrency stress test (CP3) | Pending |

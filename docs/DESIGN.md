@@ -40,7 +40,7 @@ Deferred, not deleted: `opening_hours`, `order_status_history`, analytics endpoi
 | Drivers | psycopg 3, Motor |
 | Containers | Docker Compose |
 
-**On raw SQL.** Raw SQL string concatenation is banned in this codebase as an injection vector. Every query is a parameterized SQLAlchemy Core/ORM construct — no f-string or `%`-formatted SQL anywhere. Literal SQL appears in two places, both fixed strings with no interpolation: `docker/initdb/01_extensions.sql`, and `op.execute()` in migrations for the `EXCLUDE` constraint and partial indexes, which SQLAlchemy's DDL layer does not express as cleanly. The rule distinguishes developer-written DDL from SQL assembled out of request data; only the latter is an injection vector.
+**On raw SQL.** Raw SQL string concatenation is banned in this codebase as an injection vector. Every query is a parameterized SQLAlchemy Core/ORM construct — no f-string or `%`-formatted SQL anywhere. Literal SQL appears only as fixed strings with no interpolation: `docker/initdb/01_extensions.sql`; `op.execute()` in migrations for the `EXCLUDE` constraint, partial indexes and `0004`'s NOT NULL sequence, which SQLAlchemy's DDL layer does not express as cleanly; and `SET lock_timeout` in `alembic/env.py`. The rule distinguishes developer-written DDL from SQL assembled out of request data; only the latter is an injection vector.
 
 ---
 
@@ -152,66 +152,96 @@ Exactly one `201`, nineteen `409`, one row. There is a third proof for free: `se
 
 ## Migration
 
-Target: `reservations.guest_name` → `first_name` + `last_name`, with booking traffic running throughout.
+Target: `reservations.guest_name` → `first_name` + `last_name`, with booking traffic running throughout. Procedure, commands and rollback: [MIGRATION.md](MIGRATION.md).
 
-| Step | Artifact | Reversible |
+| Step | Schema (Alembic) | App phase (`app/migration.py`) |
 |---|---|---|
-| 1 Expand | `alembic/versions/0002_expand_guest_name.py` | yes, `downgrade` |
-| 2 Dual write | `app/services/reservations.py::create_reservation` | yes, code revert |
-| 3 Backfill | `scripts/backfill_names.py` | yes, idempotent |
-| 4 Switch read | `READ_NEW_NAME_FIELDS` env flag | yes, flip the flag |
-| 5 Contract | `0003_drop_guest_name.py`, not yet written | **no — runs last** |
+| 1 Expand | `0002` adds both columns, nullable | `legacy` |
+| 2 Dual write | — | `dual_write` |
+| 3 Backfill | `scripts/backfill_names.py` | `dual_write` |
+| 4 Switch read | — | `read_new` |
+| 5 Contract | `0003` drops NOT NULL → `0004` drops the column | `new_only` between them |
+
+Measured in two rehearsals: 25 req/s of mixed POST / GET / PATCH across all five steps, ~2,300 requests each, 0 failures, p99 29–87 ms.
+
+### Phases change at runtime, not by redeploy
+
+Each step that changes what the API does is a phase, switched with `PUT /api/v1/admin/migration`. A redeploy is a restart, and a restart under traffic is the downtime being demonstrated against. Every reservation write sets exactly the phase's write columns and every read loads exactly its read columns — one function each in `services/reservations.py` (`write_name`, `select_reservations`).
+
+| Phase | Writes | Reads |
+|---|---|---|
+| `legacy` | `guest_name` | `guest_name` |
+| `dual_write` | all three | `guest_name` |
+| `read_new` | all three | `first_name`, `last_name` only |
+| `new_only` | `first_name`, `last_name` | `first_name`, `last_name` |
+
+The phase lives in process memory: one worker, one phase. Several workers would each need the change — the known limit, and why the demo runs one.
+
+### Guards: out-of-order steps are refused
+
+A phase change is checked against the live schema and data first; an unsafe one returns `409` with the reason. The same check runs at startup, so a restart after `0004` with `.env` still saying `legacy` starts in `new_only` instead of failing every request.
+
+| Refused | Because |
+|---|---|
+| any phase naming a column the schema lacks | `UndefinedColumn` on every request |
+| `read_new` while rows await backfill | those names would read as empty |
+| `read_new` while first + last disagree with `guest_name` | names edited during a detour back to `legacy` are stale; the backfill only fills NULLs |
+| `new_only` while `guest_name` is NOT NULL | every INSERT would violate it |
+| `legacy` / `dual_write` once `new_only` wrote rows | those rows have no `guest_name` |
+
+The mismatch rule is one function (`migration.name_mismatch`) used by both the guard and `backfill_names.py --verify`.
+
+### The model never names a column the schema may lack
+
+All three name columns exist only for part of the migration, so the mapping in `models/reservation.py` must not reference them unasked:
+
+| Mechanism | Effect |
+|---|---|
+| `deferred=True` | `SELECT reservation` omits them; queries `undefer` the phase's read columns |
+| `deferred_raiseload=True` | touching an unloaded one raises instead of lazy-loading a column that may not exist |
+| `server_default=FetchedValue()` | an unset column is left out of the INSERT instead of being sent as NULL. No DDL — migrations own the DDL |
+| `eager_defaults=False` | stops SQLAlchemy adding those columns to `INSERT … RETURNING` |
 
 ### Expand
 
-Both columns nullable with no default. Since PostgreSQL 11 that is a catalog-only change: no table rewrite, no data pages touched, `ACCESS EXCLUSIVE` held for microseconds.
+Both columns nullable with no default. Since PostgreSQL 11 that is a catalog-only change: no table rewrite, no data pages touched, `ACCESS EXCLUSIVE` held for microseconds. `NOT NULL DEFAULT ''` would rewrite every row under that lock, blocking all reads and writes.
 
-`NOT NULL DEFAULT ''` would rewrite every row while holding that lock, blocking all reads and writes — precisely the downtime this exercise exists to avoid. This is the most important sentence in the plan.
+A partial index `WHERE first_name IS NULL` serves the backfill's cursor, shrinking to empty as it progresses; `0004` drops it.
 
-A partial index `WHERE first_name IS NULL` supports the backfill, shrinking to empty as it progresses, dropped at Contract.
+> `CREATE INDEX CONCURRENTLY` avoids the write lock but cannot run inside a transaction, and Alembic wraps migrations in one. At this size the plain form is instant; on a large table it would be created outside Alembic.
 
-> `CREATE INDEX CONCURRENTLY` avoids a write lock but cannot run inside a transaction, and Alembic wraps migrations in one. At this table size the plain form is instant; on a large table the index would be created outside Alembic.
+**Lock queueing.** An `ALTER TABLE` waiting for its lock behind a slow transaction blocks every later query on the table — an outage from a migration that has not started. `alembic/env.py` sets `lock_timeout = 5s`: the migration fails cleanly and is rerun instead.
 
 ### Dual write
 
-Every insert populates all three columns. `split_guest_name()` is defined once in the service and **imported** by the backfill — two copies would eventually disagree, which is a silent data-inconsistency bug.
+`split_guest_name()` is defined once in the service and **imported** by the backfill and the seed — two copies would eventually disagree, a silent data-inconsistency bug. `PATCH /reservations/{id}` accepts `guest_name` and dual-writes it the same way as a create.
 
 ### Backfill
 
 | Property | Mechanism | Why |
 |---|---|---|
-| Batched | 500 rows per transaction | A whole-table `UPDATE` holds row locks for the entire run |
-| Resumable | `WHERE first_name IS NULL` | Kill and rerun; no checkpoint file to lose |
-| Throttled | `--sleep` between batches | Yields to real traffic |
-| Idempotent | migrated rows invisible to the query | Running twice is a no-op |
-| Safe vs live writes | re-checks the null inside the `UPDATE` | Never clobbers a fresher dual-write |
+| Keyset cursor | `id > last_id ORDER BY id LIMIT 500` on the partial index | `OFFSET` rescans every skipped row on every batch |
+| Short batches | one transaction per batch | a whole-table `UPDATE` holds row locks for the entire run |
+| Never waits on traffic | `FOR UPDATE SKIP LOCKED`; a later pass picks skipped rows up | a row a request is updating is not worth blocking on |
+| Checkpoint | prints `--start-after <id>` per batch | resume exactly; restarting without it is also safe |
+| Race-safe | `UPDATE … WHERE first_name IS NULL` | never overwrites a fresher dual-write |
+| One round trip per batch | executemany of a single `UPDATE` | not one statement per row |
+| Throttled | `--sleep` between batches | yields to real traffic |
 
 ### Switch read
 
-`to_out()` is the only read path, so the switch is one branch in one function. The response shape never changes. It falls back to `guest_name` when the new fields are empty, which makes the flag safe to flip mid-backfill.
+`to_out()` is the only read path. In `read_new` it builds the name from `first_name` + `last_name` and does not load `guest_name` at all — the test suite proves it by corrupting `guest_name` in the database and reading the original name back. The response shape never changes.
 
-### Contract
+### Contract is two migrations
 
-Only after `--verify` reports zero remaining and zero mismatches:
+Dropping `guest_name` while the API writes it turns every booking into a `500`; the API can stop writing it only once the column accepts NULL. So: `0003` drops NOT NULL (catalog-only) → phase `new_only` → `0004` drops the column.
 
-```sql
-ALTER TABLE reservations DROP COLUMN guest_name;
-DROP INDEX idx_reservations_backfill;
-```
+`0004` also:
 
-Irreversible. Runs last, once. Take a backup first.
+- refuses to run while any row lacks `first_name` — the whole upgrade rolls back
+- makes `first_name` / `last_name` NOT NULL without a blocking scan: `CHECK … NOT VALID` (instant) → `VALIDATE` (scans under `SHARE UPDATE EXCLUSIVE`, which does not block reads or writes) → `SET NOT NULL` (PostgreSQL 12+ trusts the valid check, no scan) → drop the check. Each in its own transaction, or the first lock would be held through the scan.
 
-### Rollback
-
-| Step | Rollback |
-|---|---|
-| 1 | `alembic downgrade 0001` |
-| 2 | revert the commit |
-| 3 | stop the script; partial backfill is harmless, dual-write keeps `guest_name` authoritative |
-| 4 | `READ_NEW_NAME_FIELDS=false`, restart — no migration, no redeploy |
-| 5 | none — restore from backup |
-
-Commands: [README](../README.md#zero-downtime-migration). Verification between every step is `backfill_names.py --verify` plus `traffic.py --mode steady`; any response that is not `201` or a legitimate `409` is downtime.
+Its downgrade rebuilds `guest_name` from the new columns — lossless for names normalised to single spaces. It exists for rehearsals; production rollback past Contract is a backup restore.
 
 ---
 
@@ -273,4 +303,5 @@ Measurement is the next step: `EXPLAIN ANALYZE` before and after on the heaviest
 | Merge conflict churn | Disjoint file ownership, integration day in week 7 |
 | A member disengages | Weekly commits are visible; raise it in week 5, not week 11 |
 | Live demo fails | Recorded backup walkthrough |
-| Migration corrupts data | Every step reversible except Contract; back up before Contract |
+| Migration corrupts data | Guards refuse out-of-order phases; `0004` refuses unmigrated rows; `traffic.py` checks every name it reads back; back up before Contract |
+| A migration step queues traffic behind its lock | `lock_timeout = 5s`; the step fails and is rerun |
