@@ -15,9 +15,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import migration
 from app.config import settings
 from app.db import mongo, postgres
-from app.routers import auth, orders, products, reservations, restaurants, users
+from app.routers import admin, auth, orders, products, reservations, restaurants, users
 
 logging.basicConfig(level=settings.log_level)
 log = logging.getLogger("tableflow")
@@ -33,6 +34,12 @@ async def lifespan(app: FastAPI):
         # Do not block startup on Mongo - /health reports the real state and
         # a dead Mongo should be visible there, not as an opaque crash loop.
         log.warning("could not create MongoDB indexes at startup", exc_info=True)
+    try:
+        await migration.reconcile_with_schema(postgres.engine)
+    except Exception:  # noqa: BLE001
+        # Same reasoning: an unreachable PostgreSQL shows up in /health.
+        log.warning("could not check the schema against the migration phase", exc_info=True)
+    log.info("name migration phase: %s", migration.current().value)
     yield
     await postgres.close()
     await mongo.close()
@@ -65,6 +72,7 @@ app.include_router(restaurants.router)
 app.include_router(products.router)
 app.include_router(reservations.router)
 app.include_router(orders.router)
+app.include_router(admin.router)
 
 
 @app.get("/health", tags=["meta"])
@@ -82,7 +90,7 @@ async def health() -> dict:
         "postgres": pg_ok,
         "mongodb": mongo_ok,
         "env": settings.app_env,
-        "read_new_name_fields": settings.read_new_name_fields,
+        "name_migration_phase": migration.current().value,
     }
 
 
