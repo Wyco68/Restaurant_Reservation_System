@@ -376,6 +376,48 @@ a.card:hover, button.card:hover {
   color: var(--color-muted-fg); text-decoration: line-through;
 }
 
+/* ------------------------------------------------------------ bookings */
+
+.bookings { margin-top: var(--space-6); }
+.bookings__group {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--color-muted-fg);
+  font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.bookings__list { display: grid; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+
+/* The details open the confirmation page; Cancel sits beside the link,
+   never inside it, so it stays a separate control. */
+.booking {
+  display: grid; align-items: center; gap: var(--space-2) var(--space-3);
+  grid-template-columns: 1fr auto auto;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-card); color: var(--color-card-fg);
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  transition: border-color var(--t-base) var(--ease);
+}
+.booking:hover { border-color: var(--color-primary); }
+.booking__link { display: grid; gap: 4px; color: inherit; text-decoration: none; min-width: 0; }
+.booking__date {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--color-primary); font-weight: 700; font-size: 0.9rem;
+}
+.booking__place { font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+.booking__meta {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--color-muted-fg); font-size: 0.87rem;
+}
+.booking__status { text-transform: capitalize; }
+.booking__status--confirmed { color: var(--color-ok); }
+.booking__status--cancelled { color: var(--color-danger); }
+.booking__cancel { min-height: 36px; padding: 0 var(--space-3); }
+.booking--past { background: transparent; }
+.booking--past .booking__date { color: var(--color-muted-fg); }
+@media (max-width: 520px) {
+  .booking { grid-template-columns: 1fr auto; }
+  .booking__cancel { grid-column: 1 / -1; justify-self: start; }
+}
+
 /* ---------------------------------------------------------------- forms */
 
 .form { display: grid; gap: var(--space-4); }
