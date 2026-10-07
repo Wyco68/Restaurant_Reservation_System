@@ -43,3 +43,15 @@ desktop.ini
 *.log
 logs/
 demo/*.mp4
+
+# --- Handoff bundles ---
+# A member's bundle is unzipped outside the repo, applied, and committed by
+# its owner. The bundle itself - instructions, patch, file copies, or the
+# leftovers of a failed apply - never belongs in the repository.
+handoff/
+.handoff-internal.md
+READ_ME_FIRST.md
+/files/
+*.patch
+*.orig
+*.rej
