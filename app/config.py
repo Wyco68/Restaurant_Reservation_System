@@ -5,6 +5,7 @@ into source.
 """
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -46,6 +47,12 @@ class Settings(BaseSettings):
     # Flipping this is the SWITCH READ step of the Expand-Contract migration.
     # Rollback is a flag flip, not a redeploy.
     read_new_name_fields: bool = False
+
+    # --- guest_name migration ---
+    # Phase a fresh process starts in. It is changed at runtime through
+    # PUT /api/v1/admin/migration, and lowered at startup if the schema
+    # cannot serve it. See app/migration.py.
+    name_migration_phase: Literal["legacy", "dual_write", "read_new", "new_only"] = "legacy"
 
     @field_validator("jwt_secret")
     @classmethod
