@@ -14,8 +14,10 @@ Prerequisites:
 from __future__ import annotations
 
 import asyncio
+import random
 import sys
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -27,7 +29,63 @@ from httpx import ASGITransport, AsyncClient
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+from sqlalchemy import create_engine  # noqa: E402
+
+from app import migration  # noqa: E402
+from app.config import settings  # noqa: E402
+from app.db import postgres  # noqa: E402
 from app.main import app  # noqa: E402
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def migration_phase():
+    """Run every test in the phase the app would start in, then restore it.
+
+    ASGITransport does not run the app's lifespan, so the startup check that
+    fits the phase to the schema has to happen here - otherwise the suite
+    would fail against a schema that is already contracted.
+    """
+    before = migration.current()
+    await migration.reconcile_with_schema(postgres.engine)
+    yield
+    migration.set_phase(before)
+
+
+@pytest.fixture(scope="session")
+def db():
+    """Synchronous engine for asserting on columns the API does not expose."""
+    engine = create_engine(settings.postgres_sync_dsn)
+    yield engine
+    engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def free_slot(client: AsyncClient):
+    """Return a factory for (restaurant_id, table_id, starts_at) nobody holds."""
+    r = await client.get("/api/v1/restaurants?limit=1")
+    items = r.json()["items"]
+    if not items:
+        pytest.skip("no seeded restaurants - run scripts/seed.py")
+    restaurant_id = items[0]["id"]
+
+    async def make() -> tuple[int, int, datetime]:
+        start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
+            days=random.randint(2_000, 9_000), hours=random.randint(0, 23)
+        )
+        r = await client.get(
+            f"/api/v1/restaurants/{restaurant_id}/availability",
+            params={
+                "starts_at": start.isoformat(),
+                "ends_at": (start + timedelta(minutes=90)).isoformat(),
+                "party_size": 2,
+            },
+        )
+        free = [s for s in r.json() if s["available"]]
+        if not free:
+            pytest.skip("no table available")
+        return restaurant_id, free[0]["restaurant_table_id"], start
+
+    return make
 
 
 @pytest_asyncio.fixture

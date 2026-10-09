@@ -41,6 +41,7 @@ class ReservationCreate(BaseModel):
 
 
 class ReservationUpdate(BaseModel):
+    guest_name: str | None = Field(default=None, min_length=2, max_length=120)
     party_size: int | None = Field(default=None, gt=0, le=20)
     status: ReservationStatus | None = None
 
