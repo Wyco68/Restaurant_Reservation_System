@@ -1,4 +1,11 @@
-"""Reservation logic: double-booking prevention and the name read-switch.
+"""Reservation logic: double-booking prevention and the name migration.
+
+NAME MIGRATION
+--------------
+Which name columns are written and read depends on the phase in
+app/migration.py. Every write sets exactly `migration.write_columns()` and
+every read loads exactly `migration.read_columns()`, so the same code serves
+the schema before Expand, between the steps, and after Contract.
 
 CONCURRENCY DESIGN
 ------------------
@@ -26,15 +33,16 @@ from __future__ import annotations
 import logging
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
-from app.config import settings
+from app import migration
 from app.models.reservation import Reservation, ReservationStatus
 from app.models.restaurant import RestaurantTable
 from app.models.user import User
-from app.schemas.reservation import ReservationCreate, ReservationOut
+from app.schemas.reservation import ReservationCreate, ReservationOut, ReservationUpdate
 
 log = logging.getLogger(__name__)
 
@@ -54,24 +62,47 @@ def split_guest_name(full: str) -> tuple[str, str]:
     return first[:60], last[:60]
 
 
+def select_reservations() -> Select[tuple[Reservation]]:
+    """SELECT for whole reservations, loading only the phase's name columns.
+
+    The name columns are deferred on the model, so a plain select(Reservation)
+    never names a column that may not exist yet (before Expand) or any more
+    (after Contract). Every reservation query starts here.
+    """
+    return select(Reservation).options(
+        *(undefer(getattr(Reservation, c)) for c in migration.read_columns())
+    )
+
+
+def write_name(r: Reservation, guest_name: str) -> None:
+    """THE DUAL-WRITE POINT: set exactly the phase's name columns."""
+    first, last = split_guest_name(guest_name)
+    values = {"guest_name": guest_name, "first_name": first, "last_name": last}
+    for column in migration.write_columns():
+        setattr(r, column, values[column])
+
+
+async def reload(session: AsyncSession, r: Reservation) -> Reservation:
+    """Re-read after a commit: server defaults plus the phase's name columns."""
+    return await session.scalar(
+        select_reservations()
+        .where(Reservation.id == r.id)
+        .execution_options(populate_existing=True)
+    )
+
+
 def to_out(r: Reservation) -> ReservationOut:
     """Build the response body.
 
-    THIS IS THE SWITCH-READ POINT.
-
-    The response shape is identical either way; only the source column
-    changes. Rollback is flipping READ_NEW_NAME_FIELDS back to false - a
-    config change, not a redeploy, and not a migration.
+    THIS IS THE SWITCH-READ POINT. Before read_new the name comes from
+    guest_name; from read_new on it comes from first_name / last_name only -
+    guest_name is not even loaded. The response shape never changes, so
+    clients cannot tell which column served them.
     """
-    if settings.read_new_name_fields:
-        guest_name = " ".join(p for p in (r.first_name, r.last_name) if p).strip()
-        # Defensive fallback: if the backfill has not yet reached this row,
-        # serve the legacy value rather than an empty string. This is what
-        # makes the switch safe to flip mid-backfill.
-        if not guest_name:
-            guest_name = r.guest_name
-    else:
+    if "guest_name" in migration.read_columns():
         guest_name = r.guest_name
+    else:
+        guest_name = " ".join(p for p in (r.first_name, r.last_name) if p)
 
     return ReservationOut(
         id=r.id,
@@ -111,23 +142,16 @@ async def create_reservation(
             f"Party of {payload.party_size} exceeds table capacity of {table.capacity}",
         )
 
-    first, last = split_guest_name(payload.guest_name)
-
     reservation = Reservation(
         user_id=user.id,
         restaurant_id=payload.restaurant_id,
         restaurant_table_id=payload.restaurant_table_id,
-        # --- DUAL-WRITE ---
-        # Legacy and new columns are written together on every insert. This
-        # is what lets the read switch flip safely in either direction.
-        guest_name=payload.guest_name,
-        first_name=first,
-        last_name=last,
         party_size=payload.party_size,
         starts_at=payload.starts_at,
         ends_at=payload.ends_at,
         status=ReservationStatus.CONFIRMED,
     )
+    write_name(reservation, payload.guest_name)
     session.add(reservation)
 
     try:
@@ -141,8 +165,22 @@ async def create_reservation(
             ) from exc
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Reservation violates a constraint") from exc
 
-    await session.refresh(reservation)
-    return reservation
+    return await reload(session, reservation)
+
+
+async def update_reservation(
+    session: AsyncSession, reservation: Reservation, payload: ReservationUpdate
+) -> Reservation:
+    """Apply a partial update. A new guest_name is dual-written like a create."""
+    if payload.guest_name is not None:
+        write_name(reservation, payload.guest_name)
+    if payload.party_size is not None:
+        reservation.party_size = payload.party_size
+    if payload.status is not None:
+        reservation.status = payload.status
+
+    await session.commit()
+    return await reload(session, reservation)
 
 
 async def cancel_reservation(
@@ -156,5 +194,4 @@ async def cancel_reservation(
     """
     reservation.status = ReservationStatus.CANCELLED
     await session.commit()
-    await session.refresh(reservation)
-    return reservation
+    return await reload(session, reservation)

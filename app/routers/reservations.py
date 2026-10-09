@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_session
@@ -24,7 +23,7 @@ async def _load_owned(
     reservation_id: int, session: AsyncSession, current
 ) -> Reservation:
     reservation = await session.scalar(
-        select(Reservation).where(Reservation.id == reservation_id)
+        svc.select_reservations().where(Reservation.id == reservation_id)
     )
     if reservation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Reservation not found")
@@ -69,7 +68,7 @@ async def list_my_reservations(session: Session, current: CurrentUser) -> list[R
     time through GET /{id}, never as a bulk list.
     """
     rows = await session.scalars(
-        select(Reservation)
+        svc.select_reservations()
         .where(Reservation.user_id == current.id)
         .order_by(Reservation.starts_at.desc())
     )
@@ -91,15 +90,9 @@ async def update_reservation(
     session: Session,
     current: CurrentUser,
 ) -> ReservationOut:
+    """Partial update. A new guest_name is dual-written, same as on create."""
     reservation = await _load_owned(reservation_id, session, current)
-
-    if payload.party_size is not None:
-        reservation.party_size = payload.party_size
-    if payload.status is not None:
-        reservation.status = payload.status
-
-    await session.commit()
-    await session.refresh(reservation)
+    reservation = await svc.update_reservation(session, reservation, payload)
     return svc.to_out(reservation)
 
 
