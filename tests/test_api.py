@@ -214,7 +214,9 @@ async def test_concurrent_booking_allows_exactly_one(
             "party_size": 2,
         },
     )
-    slots = avail.json()
+    # /availability lists every table with an `available` flag; a re-run in
+    # the same hour must skip the table the previous run already booked.
+    slots = [s for s in avail.json() if s["available"]]
     if not slots:
         pytest.skip("no tables available")
     table_id = slots[0]["restaurant_table_id"]
@@ -258,6 +260,58 @@ async def test_reservation_end_before_start_rejected(
         headers=auth_headers,
     )
     assert r.status_code == 422
+
+
+# --------------------------------------------- GET /reservations (own list)
+
+
+async def test_list_reservations_requires_auth(client: AsyncClient):
+    r = await client.get("/api/v1/reservations")
+    assert r.status_code == 401
+
+
+async def test_list_reservations_returns_only_own(
+    client: AsyncClient, auth_headers: dict
+):
+    r = await client.get("/api/v1/reservations", headers=auth_headers)
+    assert r.status_code == 200
+    assert r.json() == []
+
+    restaurants = (await client.get("/api/v1/restaurants?limit=1")).json()["items"]
+    if not restaurants:
+        pytest.skip("no seeded restaurants - run scripts/seed.py")
+    restaurant_id = restaurants[0]["id"]
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(days=902)
+    end = start + timedelta(minutes=90)
+    slots = [
+        s
+        for s in (
+            await client.get(
+                f"/api/v1/restaurants/{restaurant_id}/availability",
+                params={"starts_at": start.isoformat(), "ends_at": end.isoformat(), "party_size": 2},
+            )
+        ).json()
+        if s["available"]
+    ]
+    if not slots:
+        pytest.skip("no tables available")
+
+    created = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": restaurant_id,
+            "restaurant_table_id": slots[0]["restaurant_table_id"],
+            "guest_name": "List Check",
+            "party_size": 2,
+            "starts_at": start.isoformat(),
+            "ends_at": end.isoformat(),
+        },
+        headers=auth_headers,
+    )
+    assert created.status_code == 201
+
+    listed = (await client.get("/api/v1/reservations", headers=auth_headers)).json()
+    assert [b["id"] for b in listed] == [created.json()["id"]]
 
 
 # ------------------------------------------------- migration helper logic

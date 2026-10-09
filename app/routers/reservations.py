@@ -57,6 +57,25 @@ async def create_reservation(
     return svc.to_out(reservation)
 
 
+@router.get(
+    "",
+    response_model=list[ReservationOut],
+    responses={401: {"description": "Missing or invalid token"}},
+)
+async def list_my_reservations(session: Session, current: CurrentUser) -> list[ReservationOut]:
+    """The signed-in user's own reservations, latest first, cancelled included.
+
+    Always scoped to the caller - staff read other users' bookings one at a
+    time through GET /{id}, never as a bulk list.
+    """
+    rows = await session.scalars(
+        select(Reservation)
+        .where(Reservation.user_id == current.id)
+        .order_by(Reservation.starts_at.desc())
+    )
+    return [svc.to_out(r) for r in rows]
+
+
 @router.get("/{reservation_id}", response_model=ReservationOut)
 async def get_reservation(
     reservation_id: int, session: Session, current: CurrentUser
