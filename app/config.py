@@ -43,11 +43,6 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
 
-    # --- Read-switch feature flag ---
-    # Flipping this is the SWITCH READ step of the Expand-Contract migration.
-    # Rollback is a flag flip, not a redeploy.
-    read_new_name_fields: bool = False
-
     # --- guest_name migration ---
     # Phase a fresh process starts in. It is changed at runtime through
     # PUT /api/v1/admin/migration, and lowered at startup if the schema
