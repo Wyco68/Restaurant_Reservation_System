@@ -24,6 +24,18 @@ class UserCreate(BaseModel):
     # admin-only operation, never something a signup payload can request.
 
 
+class UserUpdate(BaseModel):
+    """Self-service profile edit. Every field is optional; only the ones
+    sent are changed. Role, password and is_active are deliberately absent -
+    a profile edit can never escalate privileges or bypass a password check.
+    """
+
+    email: EmailStr | None = None
+    full_name: str | None = Field(default=None, min_length=2, max_length=120)
+    # Sending null clears the phone number; omitting it leaves it unchanged.
+    phone: str | None = Field(default=None, max_length=32)
+
+
 class UserOut(BaseModel):
     """Response model. Note what is ABSENT: password_hash is never returned."""
 
