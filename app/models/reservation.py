@@ -16,6 +16,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    FetchedValue,
     ForeignKey,
     Index,
     SmallInteger,
@@ -51,14 +52,33 @@ class Reservation(Base, TimestampMixin):
     )
 
     # --- Migration columns -----------------------------------------------
-    # guest_name is the LEGACY field, dropped at the Contract step.
-    guest_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    # first_name / last_name are added by the Expand step. Nullable with no
+    # guest_name is the LEGACY field: made nullable by 0003, dropped by 0004.
+    # first_name / last_name are added by 0002 (Expand). Nullable with no
     # default ON PURPOSE: in PostgreSQL 11+ that is a metadata-only change,
     # so there is no table rewrite and no long ACCESS EXCLUSIVE lock. A
     # NOT NULL DEFAULT would rewrite the table and defeat the exercise.
-    first_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
-    last_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    #
+    # All three exist in the database only for part of the migration, so the
+    # mapping must never name one the schema lacks:
+    #   deferred          SELECT reservation omits them; a query loads the
+    #                     ones the phase reads (services/reservations.py).
+    #   raiseload         touching one that was not loaded raises instead of
+    #                     lazy-loading a column that may not exist.
+    #   FetchedValue()    tells the ORM to leave an unset column out of the
+    #                     INSERT rather than send NULL for it. No DDL default
+    #                     is created; migrations own the DDL.
+    guest_name: Mapped[str | None] = mapped_column(
+        String(120), server_default=FetchedValue(),
+        deferred=True, deferred_raiseload=True,
+    )
+    first_name: Mapped[str | None] = mapped_column(
+        String(60), server_default=FetchedValue(),
+        deferred=True, deferred_raiseload=True,
+    )
+    last_name: Mapped[str | None] = mapped_column(
+        String(60), server_default=FetchedValue(),
+        deferred=True, deferred_raiseload=True,
+    )
 
     party_size: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -75,6 +95,10 @@ class Reservation(Base, TimestampMixin):
     )
 
     user: Mapped["User"] = relationship(back_populates="reservations")  # noqa: F821
+
+    # Without this, SQLAlchemy 2.x adds every FetchedValue column to the
+    # INSERT's RETURNING clause - naming the very columns that may not exist.
+    __mapper_args__ = {"eager_defaults": False}
 
     __table_args__ = (
         CheckConstraint("party_size > 0 AND party_size <= 20", name="ck_reservations_party"),
