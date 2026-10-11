@@ -1,7 +1,8 @@
 """Users router.
 
-    POST /api/v1/users        -> 201, PostgreSQL
-    GET  /api/v1/users/{id}   -> 200, PostgreSQL
+    POST  /api/v1/users        -> 201, PostgreSQL
+    GET   /api/v1/users/{id}   -> 200, PostgreSQL
+    PATCH /api/v1/users/me     -> 200, PostgreSQL
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_session
 from app.models.user import User, UserRole
-from app.schemas.user import UserCreate, UserOut
+from app.schemas.user import UserCreate, UserOut, UserUpdate
 from app.security import CurrentUser, hash_password
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
@@ -84,4 +85,37 @@ async def get_user(user_id: uuid.UUID, session: Session, current: CurrentUser) -
 @router.get("/me/profile", response_model=UserOut)
 async def get_own_profile(current: CurrentUser) -> User:
     """Convenience endpoint so the frontend need not know its own UUID."""
+    return current
+
+
+@router.patch(
+    "/me",
+    response_model=UserOut,
+    responses={
+        401: {"description": "Missing or invalid token"},
+        409: {"description": "Email already registered"},
+        422: {"description": "Validation failed"},
+    },
+)
+async def update_own_profile(payload: UserUpdate, session: Session, current: CurrentUser) -> User:
+    """Edit the caller's own name, email or phone.
+
+    Only fields present in the request body change. `full_name` and `email`
+    cannot be cleared - they are NOT NULL - so an explicit null for either is
+    ignored rather than turned into a 500.
+    """
+    changes = payload.model_dump(exclude_unset=True)
+    for field in ("email", "full_name"):
+        if changes.get(field) is None:
+            changes.pop(field, None)
+    for field, value in changes.items():
+        setattr(current, field, value)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        # Same arbiter as signup: the UNIQUE (CITEXT) index on email.
+        raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered") from exc
+
+    await session.refresh(current)
     return current

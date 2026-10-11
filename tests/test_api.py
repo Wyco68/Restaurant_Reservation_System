@@ -86,6 +86,38 @@ async def test_get_own_profile_returns_200(client: AsyncClient, auth_headers: di
     assert r.json()["role"] == "customer"
 
 
+async def test_update_own_profile(client: AsyncClient, auth_headers: dict):
+    r = await client.patch(
+        "/api/v1/users/me",
+        json={"full_name": "Renamed User", "phone": "+66 81 234 5678"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["full_name"] == "Renamed User"
+    assert r.json()["phone"] == "+66 81 234 5678"
+
+    cleared = await client.patch("/api/v1/users/me", json={"phone": None}, headers=auth_headers)
+    assert cleared.json()["phone"] is None
+    assert cleared.json()["full_name"] == "Renamed User"
+
+
+async def test_update_profile_to_taken_email_returns_409(
+    client: AsyncClient, auth_headers: dict, unique_email: str
+):
+    other = f"other_{unique_email}"
+    await client.post(
+        "/api/v1/users",
+        json={"email": other, "password": "TestPassword123!", "full_name": "Other User"},
+    )
+    r = await client.patch("/api/v1/users/me", json={"email": other}, headers=auth_headers)
+    assert r.status_code == 409
+
+
+async def test_update_profile_requires_auth(client: AsyncClient):
+    r = await client.patch("/api/v1/users/me", json={"full_name": "Nobody"})
+    assert r.status_code == 401
+
+
 # ---------------------------------------------------- GET /products (200)
 
 
