@@ -10,7 +10,7 @@ The database URL comes from the environment, never from alembic.ini.
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 from app.config import settings
 from app.models import Base  # noqa: F401 - registers every table on Base.metadata
@@ -43,6 +43,13 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # Migrations run under live traffic. An ALTER TABLE waiting for its
+        # ACCESS EXCLUSIVE lock (behind a slow transaction) queues every
+        # later query on the table behind it - an outage caused by a
+        # migration that has not even started. Give up after 5 s instead;
+        # the migration fails cleanly and is simply re-run.
+        connection.execute(text("SET lock_timeout = '5s'"))
+        connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

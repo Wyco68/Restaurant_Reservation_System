@@ -3,10 +3,10 @@
 The Expand-and-Contract pattern:
 
     1. EXPAND      <- THIS MIGRATION
-    2. DUAL WRITE     app/services/reservations.py::create_reservation
+    2. DUAL WRITE     phase dual_write (app/migration.py)
     3. BACKFILL       scripts/backfill_names.py
-    4. SWITCH READ    READ_NEW_NAME_FIELDS=true
-    5. CONTRACT       revision 0003 (not yet written)
+    4. SWITCH READ    phase read_new
+    5. CONTRACT       revision 0003, phase new_only, revision 0004
 
 WHY THIS IS SAFE UNDER LIVE TRAFFIC
 -----------------------------------
