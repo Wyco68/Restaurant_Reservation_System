@@ -34,7 +34,7 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;  -- required by the EXCLUDE constrain
 CREATE EXTENSION IF NOT EXISTS pgcrypto;    -- gen_random_uuid()
 ```
 
-Conventions on every table: surrogate PK, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`, explicit `ON DELETE` on every FK. All timestamps are `TIMESTAMPTZ`. Money is `NUMERIC(10,2)` — never `FLOAT`, which cannot represent `0.10` exactly.
+Conventions on every table: surrogate PK, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`, explicit `ON DELETE` on every FK. All timestamps are `TIMESTAMPTZ`. Money is `NUMERIC(10,2)`, never `FLOAT`, which cannot represent `0.10` exactly.
 
 ```sql
 CREATE TYPE user_role          AS ENUM ('customer', 'staff', 'admin');
@@ -58,7 +58,7 @@ CREATE TYPE order_status       AS ENUM ('placed', 'preparing', 'ready', 'complet
 Constraints: `UNIQUE (email)`, `CHECK (char_length(full_name) >= 2)`
 Indexes: `users_pkey`, `users_email_key`, `idx_users_role (role)`
 
-The `409` on duplicate signup comes from the unique index, not an application pre-check — a pre-check races under concurrency.
+The `409` on duplicate signup comes from the unique index, not an application pre-check. A pre-check races under concurrency.
 
 ### restaurants
 
@@ -100,7 +100,7 @@ Target of both the name-split migration and the concurrency work.
 | `user_id` | `UUID` | NO | **FK users(id)** RESTRICT |
 | `restaurant_id` | `BIGINT` | NO | **FK restaurants(id)** CASCADE |
 | `restaurant_table_id` | `BIGINT` | NO | **FK restaurant_tables(id)** RESTRICT |
-| `guest_name` | `VARCHAR(120)` | NO → YES → dropped | **legacy** — nullable from `0003`, dropped by `0004` |
+| `guest_name` | `VARCHAR(120)` | NO → YES → dropped | **legacy**: nullable from `0003`, dropped by `0004` |
 | `first_name` | `VARCHAR(60)` | YES → NO | added by `0002`; NOT NULL from `0004` |
 | `last_name` | `VARCHAR(60)` | YES → NO | added by `0002`; NOT NULL from `0004` |
 | `party_size` | `SMALLINT` | NO | |
@@ -125,7 +125,7 @@ No two non-cancelled reservations may share a table and overlap in time. The hal
 
 Indexes: `no_double_booking` (GiST), `idx_reservations_user (user_id, starts_at DESC)`, `idx_reservations_restaurant_time (restaurant_id, starts_at)`, `idx_reservations_backfill (id) WHERE first_name IS NULL` (`0002`–`0003` only)
 
-`first_name` and `last_name` are added nullable with no default so adding them is metadata-only — no table rewrite, no long lock. Each step: [DESIGN.md](DESIGN.md#migration).
+`first_name` and `last_name` are added nullable with no default so adding them is metadata-only: no table rewrite, no long lock. Each step: [DESIGN.md](DESIGN.md#migration).
 
 ### orders
 
@@ -149,7 +149,7 @@ Indexes: `idx_orders_user (user_id, created_at DESC)`, `idx_orders_restaurant_st
 |---|---|---|---|
 | `id` | `BIGSERIAL` | NO | **PK** |
 | `order_id` | `BIGINT` | NO | **FK orders(id)** CASCADE |
-| `product_id` | `VARCHAR(24)` | NO | **soft reference to Mongo `products._id`** — no FK possible |
+| `product_id` | `VARCHAR(24)` | NO | **soft reference to Mongo `products._id`**; no FK possible |
 | `product_name` | `VARCHAR(150)` | NO | **snapshot** at purchase |
 | `unit_price` | `NUMERIC(10,2)` | NO | **snapshot** at purchase |
 | `quantity` | `SMALLINT` | NO | |
@@ -203,7 +203,7 @@ Backs `GET /api/v1/products` and `POST /api/v1/products`. Satisfies the dynamic-
 }
 ```
 
-A second document in the **same collection**, structurally different — the design, not an inconsistency:
+A second document in the **same collection**, structurally different. That is the design, not an inconsistency:
 
 ```json
 {
@@ -226,7 +226,7 @@ A second document in the **same collection**, structurally different — the des
 | `is_available` | yes | boolean |
 | **`attributes`** | no | **free-form object** |
 
-`attributes` is validated as "an object" and nothing more. Never used for pricing or authorization — only top-level `price` is authoritative.
+`attributes` is validated as "an object" and nothing more. Never used for pricing or authorization; only top-level `price` is authoritative.
 
 Indexes: `{restaurant_id, category}`, `{restaurant_id, is_available}`, `{name: text}`, `{price}`, `{attributes.dietary}` sparse
 
@@ -250,7 +250,7 @@ Volume: catalogue-scale, ~800 seeded.
 ```
 
 Required: `restaurant_id`, `user_id`, `rating` (1–5), `created_at`.
-Flexible: `tags[]` open vocabulary, `photos[]`, `metadata{}` — open so fields can be added without a migration.
+Flexible: `tags[]` open vocabulary, `photos[]`, `metadata{}`, open so fields can be added without a migration.
 
 Indexes: `{restaurant_id, created_at: -1}`, `{user_id}`, `{rating}`, `{tags}` multikey
 
@@ -272,7 +272,7 @@ Volume: moderate, ~1,500 seeded.
 ```
 
 Required: `event_type`, `occurred_at`.
-Flexible: `payload{}` differs per event type by design. `user_id` is `null` for anonymous visitors — the case a `NOT NULL` relational column would have made awkward.
+Flexible: `payload{}` differs per event type by design. `user_id` is `null` for anonymous visitors, the case a `NOT NULL` relational column would have made awkward.
 
 `event_type` is one of: `restaurant_search`, `restaurant_view`, `product_view`, `reservation_attempt`, `order_placed`, `click`.
 

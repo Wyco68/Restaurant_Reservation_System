@@ -32,7 +32,7 @@ Open a pull request and merge it yourself. Ask a teammate to review anything tou
 
 ## Commits
 
-Small and frequent. **Subject line only — no body, no trailers.**
+Small and frequent. **Subject line only: no body, no trailers.**
 
 ```
 <type>: <what changed, imperative>
@@ -48,7 +48,7 @@ chore: docker compose with postgres and mongo
 
 Not `update`, `fixes`, `asdf`, `final version FINAL`.
 
-If the "why" matters, it belongs in [docs/DESIGN.md](docs/DESIGN.md) or a code comment — not in the commit message.
+If the "why" matters, it belongs in [docs/DESIGN.md](docs/DESIGN.md) or a code comment, not in the commit message.
 
 **Never commit:** `.env`, `*.db`, `*.sqlite`, passwords, API keys, `__pycache__/`, `.venv/`. `.gitignore` covers these; do not override with `git add -f`.
 
@@ -86,7 +86,7 @@ Six places where two members' work meets. Change one without telling the other a
 
 ## Definition of done
 
-1. Runs on a clean clone — see [README](README.md#quick-start)
+1. Runs on a clean clone: see [README](README.md#quick-start)
 2. Endpoints return the documented status codes
 3. `pytest` passes
 4. [docs/API_CONTRACT.md](docs/API_CONTRACT.md) matches the implementation
@@ -108,17 +108,17 @@ pytest
 | Week | Aung Hein Saw | Joe D' Annibelle | Aung Thiha | Win Moe Aung |
 |---|---|---|---|---|
 | 1 | repo, models | reservation schemas | Mongo schema design | compose, skeleton |
-| 2 | migration 0001, users API | — | collection accessors | `/health`, config |
+| 2 | migration 0001, users API | - | collection accessors | `/health`, config |
 | 3 | auth: bcrypt + JWT | EXCLUDE constraint | products endpoints | orders service |
 | 4 | roles, 401/403 | booking + 409 path | seed: PostgreSQL | frontend shell |
 | 5 | restaurants + tables | availability endpoint | seed: MongoDB | frontend: search, menu |
 | 6 | indexes, projections | concurrency tests | seed verification | frontend: booking |
-| 7 | **integration — everyone on `main`** | | | |
-| 8 | **feature freeze — full run on a clean clone** | | | |
+| 7 | **integration: everyone on `main`** | | | |
+| 8 | **feature freeze: full run on a clean clone** | | | |
 | 9 | buffer | load generator | migration 0002, backfill | README, diagram |
 | 10 | polish | polish | polish | recorded walkthrough |
 | 11 | **release** | | | |
 
 Three weeks of buffer between freeze and release. That buffer is the plan, not slack.
 
-If someone falls behind, raise it in week 5, not week 11. Redistribute early — it is survivable early and fatal late.
+If someone falls behind, raise it in week 5, not week 11. Redistribute early: it is survivable early and fatal late.

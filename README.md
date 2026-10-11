@@ -20,7 +20,7 @@ python scripts/seed.py
 uvicorn app.main:app --reload
 ```
 
-`POSTGRES_PASSWORD`, `MONGO_PASSWORD` and `JWT_SECRET` are required — the app refuses to start without them. Generate a secret:
+`POSTGRES_PASSWORD`, `MONGO_PASSWORD` and `JWT_SECRET` are required; the app refuses to start without them. Generate a secret:
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -102,12 +102,13 @@ Base `/api/v1`. Full reference with examples: [docs/API_CONTRACT.md](docs/API_CO
 
 | Method | Route | DB | Auth |
 |---|---|---|---|
-| `POST` | `/users` | PG | — |
+| `POST` | `/users` | PG | none |
 | `GET` | `/users/{id}` | PG | bearer |
-| `POST` | `/auth/login` | PG | — |
-| `GET` | `/restaurants` | PG | — |
-| `GET` | `/restaurants/{id}/availability` | PG | — |
-| `GET` | `/products` | Mongo | — |
+| `PATCH` | `/users/me` | PG | bearer |
+| `POST` | `/auth/login` | PG | none |
+| `GET` | `/restaurants` | PG | none |
+| `GET` | `/restaurants/{id}/availability` | PG | none |
+| `GET` | `/products` | Mongo | none |
 | `POST` | `/products` | Mongo | staff |
 | `POST` | `/reservations` | PG | bearer |
 | `GET` | `/reservations` | PG | bearer |
@@ -115,7 +116,7 @@ Base `/api/v1`. Full reference with examples: [docs/API_CONTRACT.md](docs/API_CO
 | `DELETE` | `/reservations/{id}` | PG | bearer |
 | `POST` | `/orders` | **PG + Mongo** | bearer |
 | `PATCH` | `/orders/{id}/status` | PG | staff |
-| `GET` | `/health` | both | — |
+| `GET` | `/health` | both | none |
 | `PUT` | `/admin/migration` | PG | admin |
 
 Status codes: `200` `201` `400` `401` `403` `404` `409` `422`
@@ -152,7 +153,7 @@ pytest                    # all
 pytest -k concurrent      # double-booking test only
 ```
 
-Integration tests — run against the Docker databases. Start and seed them first.
+Integration tests: they run against the Docker databases. Start and seed them first.
 
 ### Reset everything
 
@@ -182,7 +183,7 @@ python scripts/phase.py new_only                       #   stop writing guest_na
 alembic upgrade 0004                                   #   drop guest_name
 ```
 
-`Ctrl+C` terminal 2: every check must print `PASS` — 0 5xx, 0 rejected, 0 connection errors, 0 wrong names, p99 < 500 ms.
+`Ctrl+C` terminal 2: every check must print `PASS`: 0 5xx, 0 rejected, 0 connection errors, 0 wrong names, p99 < 500 ms.
 
 ### Concurrency proof
 
@@ -216,5 +217,5 @@ Expect exactly one `201`, nineteen `409`, one row in the database.
 | Seed data | 2,468 rows / 7,300 documents |
 | REST API | Done |
 | Migration history | `0001`–`0004` |
-| Expand-Contract migration run | Rehearsed twice at 25 req/s: 0 failures, p99 29–87 ms |
+| Expand-Contract migration run | Rehearsed three times at 25 req/s: 0 failures, p99 under 100 ms |
 | Concurrency stress test (CP3) | Pending |

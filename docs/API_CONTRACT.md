@@ -39,17 +39,18 @@ Schema details: [DATA_MODEL.md](DATA_MODEL.md). Design rationale: [DESIGN.md](DE
 
 | Method | Route | Database | Auth | Core |
 |---|---|---|---|---|
-| `POST` | `/users` | PG | — | yes |
+| `POST` | `/users` | PG | none | yes |
 | `GET` | `/users/{id}` | PG | bearer | yes |
 | `GET` | `/users/me/profile` | PG | bearer | |
-| `POST` | `/auth/login` | PG | — | |
-| `GET` | `/restaurants` | PG | — | |
-| `GET` | `/restaurants/{id}` | PG | — | |
+| `PATCH` | `/users/me` | PG | bearer | |
+| `POST` | `/auth/login` | PG | none | |
+| `GET` | `/restaurants` | PG | none | |
+| `GET` | `/restaurants/{id}` | PG | none | |
 | `POST` | `/restaurants` | PG | staff | |
-| `GET` | `/restaurants/{id}/availability` | PG | — | |
-| `GET` | `/products` | Mongo | — | yes |
+| `GET` | `/restaurants/{id}/availability` | PG | none | |
+| `GET` | `/products` | Mongo | none | yes |
 | `POST` | `/products` | Mongo | staff | yes |
-| `GET` | `/products/{id}` | Mongo | — | |
+| `GET` | `/products/{id}` | Mongo | none | |
 | `POST` | `/reservations` | PG | bearer | |
 | `GET` | `/reservations` | PG | bearer | |
 | `GET` | `/reservations/{id}` | PG | bearer | |
@@ -58,7 +59,7 @@ Schema details: [DATA_MODEL.md](DATA_MODEL.md). Design rationale: [DESIGN.md](DE
 | `POST` | `/orders` | **PG + Mongo** | bearer | yes |
 | `GET` | `/orders/{id}` | PG | bearer | |
 | `PATCH` | `/orders/{id}/status` | PG | staff | |
-| `GET` | `/health` | both | — | |
+| `GET` | `/health` | both | none | |
 | `GET` | `/admin/migration` | PG | admin | |
 | `PUT` | `/admin/migration` | PG | admin | |
 
@@ -91,7 +92,7 @@ Register. The only write endpoint reachable without a token.
 | `email` | valid address, unique (case-insensitive) |
 | `password` | 8–128 chars, bcrypt-hashed, never returned |
 | `full_name` | 2–120 chars |
-| `role` | **ignored if sent** — always `customer` |
+| `role` | **ignored if sent**; always `customer` |
 
 Errors: `422` invalid payload · `409` email already registered
 
@@ -101,7 +102,7 @@ Errors: `422` invalid payload · `409` email already registered
 
 ## GET /users/{id}
 
-Response is `UserOut` as above — `password_hash` is absent from the response model, so it cannot leak.
+Response is `UserOut` as above. `password_hash` is absent from the response model, so it cannot leak.
 
 Errors: `401` no/invalid token · `403` a customer requesting another user · `404` no such user
 
@@ -121,7 +122,7 @@ A customer may read only their own record; staff and admin may read any. Without
 { "access_token": "eyJhbGciOiJIUzI1NiIs...", "token_type": "bearer", "expires_in": 3600 }
 ```
 
-Errors: `401` wrong credentials **or** unknown email — deliberately the same message, so the endpoint is not an account-existence oracle.
+Errors: `401` wrong credentials **or** unknown email: deliberately the same message, so the endpoint is not an account-existence oracle.
 
 ---
 
@@ -133,11 +134,11 @@ Paginated, filtered, projected catalogue.
 |---|---|---|---|
 | `page` | int | 1 | ≥ 1 |
 | `limit` | int | 20 | 1–100, capped |
-| `restaurant_id` | int | — | > 0 |
-| `category` | string | — | Starter, Main, Dessert, Drink, Side |
-| `min_price`, `max_price` | decimal | — | ≥ 0 |
+| `restaurant_id` | int | none | > 0 |
+| `category` | string | none | Starter, Main, Dessert, Drink, Side |
+| `min_price`, `max_price` | decimal | none | ≥ 0 |
 | `available_only` | bool | true | |
-| `q` | string | — | full-text search on `name` |
+| `q` | string | none | full-text search on `name` |
 
 ```
 GET /api/v1/products?restaurant_id=17&category=Main&page=2&limit=3
@@ -202,7 +203,7 @@ Both land in the same collection with no schema change. `201` returns the full d
 | `name` | 2–150 chars |
 | `category` | enumerated |
 | `price` | ≥ 0, ≤ 2 decimal places |
-| `attributes` | **any JSON object** — arbitrary keys, nesting, arrays |
+| `attributes` | **any JSON object**: arbitrary keys, nesting, arrays |
 
 Errors: `401` no token · `403` customer role · `422` invalid category or negative price
 
@@ -262,7 +263,7 @@ The client cannot send `unit_price` or `total_amount`. A client-supplied price i
 
 There is no two-phase commit. Correctness comes from ordering: the Mongo read precedes the PG write so an invalid product cannot produce a half-written order; the Mongo write follows the commit and is non-authoritative, wrapped and logged, so its failure loses an analytics event rather than a paid order.
 
-Prices and names are snapshotted into `order_items` — a receipt must show what the customer actually paid.
+Prices and names are snapshotted into `order_items`: a receipt must show what the customer actually paid.
 
 Errors: `401` · `403` reservation belongs to another user · `404` restaurant, reservation or product not found · `400` malformed `product_id` or product from another restaurant · `409` product unavailable · `422` empty `items`
 
@@ -314,7 +315,7 @@ The `409` is produced by the `no_double_booking` exclusion constraint, not by an
 
 Errors: `422` naive timestamp or bad window · `400` table mismatch, inactive, or capacity exceeded · `401` · `404` table not found · `409` slot taken
 
-**`guest_name` across the migration.** Requests and responses always carry one `guest_name`. Which columns store it and which one it is read from depends on the migration phase — see [`/admin/migration`](#get--put-adminmigration). The shape never changes, so clients cannot tell the migration happened.
+**`guest_name` across the migration.** Requests and responses always carry one `guest_name`. Which columns store it and which one it is read from depends on the migration phase; see [`/admin/migration`](#get--put-adminmigration). The shape never changes, so clients cannot tell the migration happened.
 
 ---
 
@@ -329,7 +330,7 @@ Query: `starts_at`, `ends_at` (ISO-8601 with offset), `party_size` (1–20).
 ]
 ```
 
-**Advisory only.** A table shown available can be taken before the booking request arrives — an unavoidable race in any check-then-act flow. The authoritative answer is the `201`-or-`409` from `POST /reservations`.
+**Advisory only.** A table shown available can be taken before the booking request arrives, an unavoidable race in any check-then-act flow. The authoritative answer is the `201`-or-`409` from `POST /reservations`.
 
 Conflicts for all candidate tables are fetched in one query, not one per table.
 
@@ -397,7 +398,7 @@ Runtime control of the `guest_name` → `first_name` + `last_name` migration. Ad
 { "detail": "Cannot enter read_new: 20094 reservations still await backfill; run scripts/backfill_names.py first" }
 ```
 
-`phase` is `legacy`, `dual_write`, `read_new` or `new_only` — what each writes and reads, and every refusal rule: [DESIGN.md](DESIGN.md#phases-change-at-runtime-not-by-redeploy).
+`phase` is `legacy`, `dual_write`, `read_new` or `new_only`. What each writes and reads, and every refusal rule: [DESIGN.md](DESIGN.md#phases-change-at-runtime-not-by-redeploy).
 
 Errors: `401` · `403` not admin · `409` unsafe transition · `422` unknown phase
 
@@ -408,6 +409,7 @@ Errors: `401` · `403` not admin · `409` unsafe transition · `422` unknown pha
 | Route | Codes | Notes |
 |---|---|---|
 | `GET /users/me/profile` | `200` `401` | Saves the frontend knowing its own UUID |
+| `PATCH /users/me` | `200` `401` `409` `422` | Edit your own `full_name`, `email` or `phone`; only fields sent change, `phone: null` clears it. Role, password and `is_active` cannot be edited here. `409` when the email is taken (the same unique index as signup) |
 | `GET /restaurants/{id}` | `200` `404` | Full record including address |
 | `POST /restaurants` | `201` `401` `403` | Caller becomes `owner_id` |
 | `GET /products/{id}` | `200` `400` `404` | Full document including `attributes` |
