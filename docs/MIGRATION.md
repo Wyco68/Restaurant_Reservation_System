@@ -1,12 +1,12 @@
-# Migration Runbook — `guest_name` → `first_name` + `last_name`
+# Migration Runbook: `guest_name` → `first_name` + `last_name`
 
 Run the five Expand-Contract steps (`Checkpoint_2_Zero_Downtime_Migration.pdf` §3) on a live API while `traffic.py` writes to it. Use it for the CP2 demo and every rehearsal before it. Why each step is built the way it is: [DESIGN.md](DESIGN.md#migration).
 
-**Done means:** `traffic.py` ends with every check `PASS` — 0 5xx, 0 rejected, 0 connection errors, 0 wrong names, p99 < 500 ms (CP2 §4).
+**Done means:** `traffic.py` ends with every check `PASS`: 0 5xx, 0 rejected, 0 connection errors, 0 wrong names, p99 < 500 ms (CP2 §4).
 
 ## Prerequisites
 
-- Stack up and `.venv` installed — [README quick start](../README.md#quick-start)
+- Stack up and `.venv` installed: [README quick start](../README.md#quick-start)
 - Three terminals in the project root, `.venv` activated
 
 ## 0. Reset to the legacy schema
@@ -18,7 +18,7 @@ python scripts/seed.py --reset --reservations 20000
 
 20,000 legacy bookings (`guest_name` only) give the backfill enough rows to watch. `alembic current` must print `0001`.
 
-Then start the API — **one worker, no `--reload`**. The phase lives in process memory, and a reload mid-demo is a restart, which is downtime.
+Then start the API with **one worker and no `--reload`**. The phase lives in process memory, and a reload mid-demo is a restart, which is downtime.
 
 ```bash
 uvicorn app.main:app            # terminal 1
@@ -26,17 +26,17 @@ uvicorn app.main:app            # terminal 1
 
 ## 1–5. The migration
 
-Terminal 2 — start traffic, leave it running:
+Terminal 2: start traffic and leave it running.
 
 ```bash
 python scripts/traffic.py --rps 25
 ```
 
-Terminal 3 — one step at a time. Check the proof before the next step.
+Terminal 3: one step at a time. Check the proof before the next step.
 
 | Step | Command | Proof |
 |---|---|---|
-| — | `python scripts/phase.py` | `phase legacy`, `first/last_name absent` |
+| 0 | `python scripts/phase.py` | `phase legacy`, `first/last_name absent` |
 | 1 Expand | `alembic upgrade 0002` | `phase.py` → `first/last_name present`, `awaiting backfill` ≈ 20,000 |
 | 2 Dual write | `python scripts/phase.py dual_write` | `writes guest_name, first_name, last_name`; `awaiting backfill` stops growing |
 | 3 Backfill | `python scripts/backfill_names.py --verify` | **before:** `awaiting backfill` ≈ 20,000, `NOT READY` |
@@ -47,9 +47,9 @@ Terminal 3 — one step at a time. Check the proof before the next step.
 | | `python scripts/phase.py new_only` | `writes first_name, last_name` |
 | | `alembic upgrade 0004` | `phase.py` → `guest_name dropped` |
 
-Terminal 2 — `Ctrl+C`. The summary must end `NO DOWNTIME - every request served correctly`.
+Terminal 2: `Ctrl+C`. The summary must end `NO DOWNTIME - every request served correctly`.
 
-Out-of-order steps are refused, not executed — worth showing once:
+Out-of-order steps are refused, not executed. Worth showing once:
 
 ```bash
 python scripts/phase.py read_new    # before step 3: 409 … still await backfill
@@ -72,7 +72,7 @@ docker exec -it tableflow_postgres psql -U dev_user -d tableflow -c "SELECT coun
 
 ## Rollback
 
-**Change the phase first, then downgrade.** A downgrade under an API still in a later phase fails its requests — the guards check phase changes, not schema changes made behind the API's back.
+**Change the phase first, then downgrade.** A downgrade under an API still in a later phase fails its requests: the guards check phase changes, not schema changes made behind the API's back.
 
 | From | Do |
 |---|---|
@@ -80,7 +80,7 @@ docker exec -it tableflow_postgres psql -U dev_user -d tableflow -c "SELECT coun
 | 2 Dual write | `phase.py legacy`, then `alembic downgrade 0001`. Names edited while back in `legacy` leave `first_name` stale; `read_new` stays refused until `0002` is redone |
 | 3 Backfill | stop it; rerun later, or `--start-after <last checkpoint>` |
 | 4 Switch read | `phase.py dual_write` |
-| 5 after 0003 | `phase.py read_new`, then `alembic downgrade 0002` — rebuilds `guest_name` for rows written in `new_only` |
+| 5 after 0003 | `phase.py read_new`, then `alembic downgrade 0002`, which rebuilds `guest_name` for rows written in `new_only` |
 | 5 after 0004 | `alembic downgrade 0003` re-adds `guest_name` from the new columns. A rehearsal convenience; in production, restore the backup |
 
 ## If something goes wrong
@@ -91,5 +91,5 @@ docker exec -it tableflow_postgres psql -U dev_user -d tableflow -c "SELECT coun
 | `alembic` fails with `lock timeout` | a long transaction held the table; [`env.py`](../alembic/env.py) gives up after 5 s rather than queueing traffic behind it | rerun the same command |
 | `0004` raises `N reservations have no first_name` | backfill incomplete; the whole upgrade rolled back | step 3, then `0004` again |
 | `traffic.py` shows `conn-err` | the API restarted | do not use `--reload`; restart and rerun from step 0 |
-| `traffic.py` shows `4xx` | a phase the schema cannot serve — usually a downgrade after a phase change | `phase.py` to see the state; see Rollback |
+| `traffic.py` shows `4xx` | a phase the schema cannot serve, usually a downgrade after a phase change | `phase.py` to see the state; see Rollback |
 | Seed fails with `UndefinedColumn` | old checkout of `seed.py` | pull `main` |

@@ -8,7 +8,7 @@ Why the system is built this way. Schema reference: [DATA_MODEL.md](DATA_MODEL.m
 
 TableFlow is a restaurant booking and ordering platform on a hybrid database backend, with schema evolution performed without downtime.
 
-Three problems drive the design: hybrid persistence across a relational and a document store, Expand-Contract migration under live traffic, and concurrency control. All three arise from the domain rather than being bolted on — reservations give a natural contention point (one table, one time slot, many requesters) and menu items give a naturally document-shaped entity.
+Three problems drive the design: hybrid persistence across a relational and a document store, Expand-Contract migration under live traffic, and concurrency control. All three arise from the domain rather than being bolted on: reservations give a natural contention point (one table, one time slot, many requesters) and menu items give a naturally document-shaped entity.
 
 ### Scope
 
@@ -40,7 +40,7 @@ Deferred, not deleted: `opening_hours`, `order_status_history`, analytics endpoi
 | Drivers | psycopg 3, Motor |
 | Containers | Docker Compose |
 
-**On raw SQL.** Raw SQL string concatenation is banned in this codebase as an injection vector. Every query is a parameterized SQLAlchemy Core/ORM construct — no f-string or `%`-formatted SQL anywhere. Literal SQL appears only as fixed strings with no interpolation: `docker/initdb/01_extensions.sql`; `op.execute()` in migrations for the `EXCLUDE` constraint, partial indexes and `0004`'s NOT NULL sequence, which SQLAlchemy's DDL layer does not express as cleanly; and `SET lock_timeout` in `alembic/env.py`. The rule distinguishes developer-written DDL from SQL assembled out of request data; only the latter is an injection vector.
+**On raw SQL.** Raw SQL string concatenation is banned in this codebase as an injection vector. Every query is a parameterized SQLAlchemy Core/ORM construct, with no f-string or `%`-formatted SQL anywhere. Literal SQL appears only as fixed strings with no interpolation: `docker/initdb/01_extensions.sql`; `op.execute()` in migrations for the `EXCLUDE` constraint, partial indexes and `0004`'s NOT NULL sequence, which SQLAlchemy's DDL layer does not express as cleanly; and `SET lock_timeout` in `alembic/env.py`. The rule distinguishes developer-written DDL from SQL assembled out of request data; only the latter is an injection vector.
 
 ---
 
@@ -66,7 +66,7 @@ frontend/          Vue 3 SPA: src/pages one module per route, vendor/ Vue + Vue 
 
 Routers hold HTTP concerns and simple CRUD; services hold logic that is genuinely multi-step.
 
-**No `repositories/` layer.** The `AsyncSession` and the Motor collection handle already sit between the domain and the driver — a repository class over them is an abstraction over an abstraction. The pattern earns its place when there are multiple implementations or the ORM must not leak into the domain; neither applies here, and the tests run against real engines by design because a mock cannot prove an `EXCLUDE` constraint works. Adding it would mean four more files and no new capability.
+**No `repositories/` layer.** The `AsyncSession` and the Motor collection handle already sit between the domain and the driver. A repository class over them is an abstraction over an abstraction. The pattern earns its place when there are multiple implementations or the ORM must not leak into the domain; neither applies here, and the tests run against real engines by design because a mock cannot prove an `EXCLUDE` constraint works. Adding it would mean four more files and no new capability.
 
 This is a deliberate deviation from Controller→Service→Repository. Reversing it is mechanical if it is ever wanted: move each `select()` out of its router into a `repositories/` module.
 
@@ -85,7 +85,7 @@ This is a deliberate deviation from Controller→Service→Repository. Reversing
 
 Two details worth calling out:
 
-- **Healthchecks** on both services, so `docker compose ps` reports *healthy* rather than merely *running* — the difference between "container started" and "database accepts connections", which is what produces a failed demo.
+- **Healthchecks** on both services, so `docker compose ps` reports *healthy* rather than merely *running*: the difference between "container started" and "database accepts connections", which is what produces a failed demo.
 - **No hard-coded credentials.** Every value comes from `.env`, which is gitignored. A named bridge network keeps the services addressable by name.
 
 Persistence is verified, not assumed:
@@ -110,13 +110,13 @@ if not has_conflict(table_id, start, end):   # T1 and T2 both read "free"
 
 No amount of care in application code closes this, because the window is *between two statements*.
 
-### Option A — row locking
+### Option A: row locking
 
 `SELECT ... FOR UPDATE` on the table row, then check overlap in Python. Correct, and a reasonable answer.
 
-Against it: correctness lives in application code. The admin panel, the seed script, a future bulk import, a teammate's new endpoint — each is a fresh chance to forget the lock and silently reintroduce the bug. The lock is also on the table row, a proxy for the real resource, so it serializes bookings for that table even at non-overlapping times.
+Against it: correctness lives in application code. The admin panel, the seed script, a future bulk import, a teammate's new endpoint: each is a fresh chance to forget the lock and silently reintroduce the bug. The lock is also on the table row, a proxy for the real resource, so it serializes bookings for that table even at non-overlapping times.
 
-### Option B — exclusion constraint (chosen)
+### Option B: exclusion constraint (chosen)
 
 ```sql
 EXCLUDE USING gist (
@@ -129,13 +129,13 @@ Overlap becomes structurally impossible, whatever the application does. Every wr
 
 Costs: needs `btree_gist`, and `IntegrityError` must be translated to `409`.
 
-### Option C — application validation alone
+### Option C: application validation alone
 
 Rejected. This is the race above. It appears to work in testing precisely because single-user testing never produces the interleaving that breaks it.
 
 ### Decision
 
-Option B. One line in a migration, impossible to defeat from application code, and the easiest to reason about. Option A remains available as belt-and-braces if profiling ever shows constraint violations are hot — they are not, because the constraint only fires on genuine contention.
+Option B. One line in a migration, impossible to defeat from application code, and the easiest to reason about. Option A remains available as belt-and-braces if profiling ever shows constraint violations are hot. They are not, because the constraint only fires on genuine contention.
 
 The pre-flight checks in `create_reservation` (table exists, belongs to the restaurant, capacity sufficient) produce friendly `400`/`404` messages. They are not the defence; deleting them would degrade error messages, not correctness.
 
@@ -157,16 +157,16 @@ Target: `reservations.guest_name` → `first_name` + `last_name`, with booking t
 | Step | Schema (Alembic) | App phase (`app/migration.py`) |
 |---|---|---|
 | 1 Expand | `0002` adds both columns, nullable | `legacy` |
-| 2 Dual write | — | `dual_write` |
+| 2 Dual write | none | `dual_write` |
 | 3 Backfill | `scripts/backfill_names.py` | `dual_write` |
-| 4 Switch read | — | `read_new` |
+| 4 Switch read | none | `read_new` |
 | 5 Contract | `0003` drops NOT NULL → `0004` drops the column | `new_only` between them |
 
-Measured in two rehearsals: 25 req/s of mixed POST / GET / PATCH across all five steps, ~2,300 requests each, 0 failures, p99 29–87 ms.
+Measured in three rehearsals: 25 req/s of mixed POST / GET / PATCH across all five steps, about 2,000 requests each, 0 failures, p99 under 100 ms.
 
 ### Phases change at runtime, not by redeploy
 
-Each step that changes what the API does is a phase, switched with `PUT /api/v1/admin/migration`. A redeploy is a restart, and a restart under traffic is the downtime being demonstrated against. Every reservation write sets exactly the phase's write columns and every read loads exactly its read columns — one function each in `services/reservations.py` (`write_name`, `select_reservations`).
+Each step that changes what the API does is a phase, switched with `PUT /api/v1/admin/migration`. A redeploy is a restart, and a restart under traffic is the downtime being demonstrated against. Every reservation write sets exactly the phase's write columns and every read loads exactly its read columns, one function each in `services/reservations.py` (`write_name`, `select_reservations`).
 
 | Phase | Writes | Reads |
 |---|---|---|
@@ -175,7 +175,7 @@ Each step that changes what the API does is a phase, switched with `PUT /api/v1/
 | `read_new` | all three | `first_name`, `last_name` only |
 | `new_only` | `first_name`, `last_name` | `first_name`, `last_name` |
 
-The phase lives in process memory: one worker, one phase. Several workers would each need the change — the known limit, and why the demo runs one.
+The phase lives in process memory: one worker, one phase. Several workers would each need the change. That is the known limit, and why the demo runs one.
 
 ### Guards: out-of-order steps are refused
 
@@ -199,7 +199,7 @@ All three name columns exist only for part of the migration, so the mapping in `
 |---|---|
 | `deferred=True` | `SELECT reservation` omits them; queries `undefer` the phase's read columns |
 | `deferred_raiseload=True` | touching an unloaded one raises instead of lazy-loading a column that may not exist |
-| `server_default=FetchedValue()` | an unset column is left out of the INSERT instead of being sent as NULL. No DDL — migrations own the DDL |
+| `server_default=FetchedValue()` | an unset column is left out of the INSERT instead of being sent as NULL. No DDL; migrations own the DDL |
 | `eager_defaults=False` | stops SQLAlchemy adding those columns to `INSERT … RETURNING` |
 
 ### Expand
@@ -210,11 +210,11 @@ A partial index `WHERE first_name IS NULL` serves the backfill's cursor, shrinki
 
 > `CREATE INDEX CONCURRENTLY` avoids the write lock but cannot run inside a transaction, and Alembic wraps migrations in one. At this size the plain form is instant; on a large table it would be created outside Alembic.
 
-**Lock queueing.** An `ALTER TABLE` waiting for its lock behind a slow transaction blocks every later query on the table — an outage from a migration that has not started. `alembic/env.py` sets `lock_timeout = 5s`: the migration fails cleanly and is rerun instead.
+**Lock queueing.** An `ALTER TABLE` waiting for its lock behind a slow transaction blocks every later query on the table: an outage from a migration that has not started. `alembic/env.py` sets `lock_timeout = 5s`: the migration fails cleanly and is rerun instead.
 
 ### Dual write
 
-`split_guest_name()` is defined once in the service and **imported** by the backfill and the seed — two copies would eventually disagree, a silent data-inconsistency bug. `PATCH /reservations/{id}` accepts `guest_name` and dual-writes it the same way as a create.
+`split_guest_name()` is defined once in the service and **imported** by the backfill and the seed. Two copies would eventually disagree, a silent data-inconsistency bug. `PATCH /reservations/{id}` accepts `guest_name` and dual-writes it the same way as a create.
 
 ### Backfill
 
@@ -230,7 +230,7 @@ A partial index `WHERE first_name IS NULL` serves the backfill's cursor, shrinki
 
 ### Switch read
 
-`to_out()` is the only read path. In `read_new` it builds the name from `first_name` + `last_name` and does not load `guest_name` at all — the test suite proves it by corrupting `guest_name` in the database and reading the original name back. The response shape never changes.
+`to_out()` is the only read path. In `read_new` it builds the name from `first_name` + `last_name` and does not load `guest_name` at all. The test suite proves it by corrupting `guest_name` in the database and reading the original name back. The response shape never changes.
 
 ### Contract is two migrations
 
@@ -238,10 +238,10 @@ Dropping `guest_name` while the API writes it turns every booking into a `500`; 
 
 `0004` also:
 
-- refuses to run while any row lacks `first_name` — the whole upgrade rolls back
+- refuses to run while any row lacks `first_name`; the whole upgrade rolls back
 - makes `first_name` / `last_name` NOT NULL without a blocking scan: `CHECK … NOT VALID` (instant) → `VALIDATE` (scans under `SHARE UPDATE EXCLUSIVE`, which does not block reads or writes) → `SET NOT NULL` (PostgreSQL 12+ trusts the valid check, no scan) → drop the check. Each in its own transaction, or the first lock would be held through the scan.
 
-Its downgrade rebuilds `guest_name` from the new columns — lossless for names normalised to single spaces. It exists for rehearsals; production rollback past Contract is a backup restore.
+Its downgrade rebuilds `guest_name` from the new columns. That is lossless for names normalised to single spaces. It exists for rehearsals; production rollback past Contract is a backup restore.
 
 ---
 
@@ -261,15 +261,15 @@ Both sit comfortably above the floor the demo needs.
 
 Users split 5 admin / 40 staff / 155 customers so every role is exercisable. Ratios are realistic: 6 tables per restaurant, 20 menu items each, ~37 reviews each, telemetry dominating by volume as it does in production.
 
-**Realism.** Faker for names, addresses and review prose; curated vocabularies for cuisines, cities, categories and event types — a demo full of lorem ipsum looks like a demo. Ratings weighted `[3, 5, 15, 40, 37]` across 1–5 stars, reproducing the real J-shaped distribution. Product `attributes` vary by category, so the collection genuinely holds different shapes. ~30% of reviews carry photos, ~15% of telemetry is anonymous, so optional fields are genuinely optional.
+**Realism.** Faker for names, addresses and review prose; curated vocabularies for cuisines, cities, categories and event types, because a demo full of lorem ipsum looks like a demo. Ratings weighted `[3, 5, 15, 40, 37]` across 1–5 stars, reproducing the real J-shaped distribution. Product `attributes` vary by category, so the collection genuinely holds different shapes. ~30% of reviews carry photos, ~15% of telemetry is anonymous, so optional fields are genuinely optional.
 
-**Reproducibility.** `Faker.seed(424242)` and `random.seed(424242)` — every teammate's database is identical, so "the bug on restaurant 17" means the same thing on four machines.
+**Reproducibility.** `Faker.seed(424242)` and `random.seed(424242)`, so every teammate's database is identical, so "the bug on restaurant 17" means the same thing on four machines.
 
-**Idempotence.** PostgreSQL users get `uuid5(NS, email)`; Mongo documents get a deterministic ObjectId from `sha1(kind:n:seed)`. Mongo writes are `UpdateOne(upsert=True)` in a `bulk_write`, so a rerun upserts rather than duplicating — running the script twice five minutes before a demo is harmless.
+**Idempotence.** PostgreSQL users get `uuid5(NS, email)`; Mongo documents get a deterministic ObjectId from `sha1(kind:n:seed)`. Mongo writes are `UpdateOne(upsert=True)` in a `bulk_write`, so a rerun upserts rather than duplicating. Running the script twice five minutes before a demo is harmless.
 
 `--reset` uses `TRUNCATE ... RESTART IDENTITY CASCADE`. Without `RESTART IDENTITY`, reseeding produces restaurant IDs starting at 41 and the `restaurant_id` values baked into Mongo documents would dangle.
 
-One bcrypt hash is computed once and reused across all 200 seeded accounts — 200 individual hashes cost ~30 seconds for no benefit on throwaway credentials. Real signups always get their own salt.
+One bcrypt hash is computed once and reused across all 200 seeded accounts; 200 individual hashes cost ~30 seconds for no benefit on throwaway credentials. Real signups always get their own salt.
 
 `--verify` exits non-zero on failure, so it works as a CI gate.
 
