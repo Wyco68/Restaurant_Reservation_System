@@ -51,6 +51,7 @@ Schema details: [DATA_MODEL.md](DATA_MODEL.md). Design rationale: [DESIGN.md](DE
 | `POST` | `/products` | Mongo | staff | yes |
 | `GET` | `/products/{id}` | Mongo | — | |
 | `POST` | `/reservations` | PG | bearer | |
+| `GET` | `/reservations` | PG | bearer | |
 | `GET` | `/reservations/{id}` | PG | bearer | |
 | `PATCH` | `/reservations/{id}` | PG | bearer | |
 | `DELETE` | `/reservations/{id}` | PG | bearer | |
@@ -58,6 +59,8 @@ Schema details: [DATA_MODEL.md](DATA_MODEL.md). Design rationale: [DESIGN.md](DE
 | `GET` | `/orders/{id}` | PG | bearer | |
 | `PATCH` | `/orders/{id}/status` | PG | staff | |
 | `GET` | `/health` | both | — | |
+| `GET` | `/admin/migration` | PG | admin | |
+| `PUT` | `/admin/migration` | PG | admin | |
 
 ---
 
@@ -311,7 +314,7 @@ The `409` is produced by the `no_double_booking` exclusion constraint, not by an
 
 Errors: `422` naive timestamp or bad window · `400` table mismatch, inactive, or capacity exceeded · `401` · `404` table not found · `409` slot taken
 
-**Name-split read switch.** `guest_name` in the response is assembled by `app/services/reservations.py::to_out`. With `READ_NEW_NAME_FIELDS=false` it reads the legacy column; with `true` it reads `first_name` + `last_name`, falling back to the legacy value for rows the backfill has not reached. The response shape never changes, so clients cannot tell the migration happened.
+**`guest_name` across the migration.** Requests and responses always carry one `guest_name`. Which columns store it and which one it is read from depends on the migration phase — see [`/admin/migration`](#get--put-adminmigration). The shape never changes, so clients cannot tell the migration happened.
 
 ---
 
@@ -354,10 +357,49 @@ Selects six named columns rather than whole entities, so `address` and the `owne
 ## GET /health
 
 ```json
-{ "status": "ok", "postgres": true, "mongodb": true, "env": "development", "read_new_name_fields": false }
+{ "status": "ok", "postgres": true, "mongodb": true, "env": "development", "name_migration_phase": "legacy" }
 ```
 
 Round-trips a real query against each engine. Per-engine booleans so a partial outage is visible. `status` is `degraded` when either is down.
+
+---
+
+## GET / PUT /admin/migration
+
+Runtime control of the `guest_name` → `first_name` + `last_name` migration. Admin only. Procedure: [MIGRATION.md](MIGRATION.md).
+
+`GET` `200`:
+
+```json
+{
+  "phase": "dual_write",
+  "writes": ["guest_name", "first_name", "last_name"],
+  "reads": ["guest_name"],
+  "guest_name_present": true,
+  "guest_name_nullable": false,
+  "new_columns_present": true,
+  "awaiting_backfill": 20094,
+  "mismatched": 0,
+  "missing_legacy": 0,
+  "allowed_phases": ["legacy", "dual_write"]
+}
+```
+
+`PUT`:
+
+```json
+{ "phase": "read_new" }
+```
+
+`200` returns the new state. `409` when the schema or data cannot serve that phase yet:
+
+```json
+{ "detail": "Cannot enter read_new: 20094 reservations still await backfill; run scripts/backfill_names.py first" }
+```
+
+`phase` is `legacy`, `dual_write`, `read_new` or `new_only` — what each writes and reads, and every refusal rule: [DESIGN.md](DESIGN.md#phases-change-at-runtime-not-by-redeploy).
+
+Errors: `401` · `403` not admin · `409` unsafe transition · `422` unknown phase
 
 ---
 
@@ -369,8 +411,9 @@ Round-trips a real query against each engine. Per-engine booleans so a partial o
 | `GET /restaurants/{id}` | `200` `404` | Full record including address |
 | `POST /restaurants` | `201` `401` `403` | Caller becomes `owner_id` |
 | `GET /products/{id}` | `200` `400` `404` | Full document including `attributes` |
+| `GET /reservations` | `200` `401` | The caller's own bookings, latest first, cancelled included |
 | `GET /reservations/{id}` | `200` `401` `403` `404` | |
-| `PATCH /reservations/{id}` | `200` | Change `party_size` or `status` |
+| `PATCH /reservations/{id}` | `200` `401` `403` `404` `422` | Change `guest_name`, `party_size` or `status`; a new `guest_name` is dual-written like a create |
 | `DELETE /reservations/{id}` | `200` | Sets `status: cancelled`; the constraint ignores cancelled rows, so the slot frees and history is kept |
 | `GET /orders/{id}` | `200` `403` `404` | Customers see only their own |
 | `PATCH /orders/{id}/status` | `200` `403` | Staff kitchen queue |

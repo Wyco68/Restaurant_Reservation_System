@@ -62,16 +62,16 @@ Disjoint by design, so merge conflicts stay rare.
 
 | Member | Owns |
 |---|---|
-| **Aung Hein Saw** | `app/models/`, `app/db/postgres.py`, `app/security.py`, `app/routers/{users,auth}.py`, `alembic/` |
-| **Joe D' Annibelle** | `app/services/reservations.py`, `app/routers/{reservations,restaurants}.py`, `app/schemas/reservation.py`, `scripts/traffic.py` |
-| **Aung Thiha** | `app/db/mongo.py`, `app/routers/products.py`, `app/schemas/product.py`, `scripts/{seed,backfill_names}.py` |
-| **Win Moe Aung** | `docker-compose.yml`, `app/{main,config}.py`, `app/services/orders.py`, `app/routers/orders.py`, `frontend/`, `README.md`, `docs/`, branch and release management |
+| **Aung Hein Saw** | `app/models/`, `app/db/postgres.py`, `app/security.py`, `app/routers/{users,auth}.py`, `alembic/`, `tests/test_reservation_model.py` |
+| **Joe D' Annibelle** | `app/services/reservations.py`, `app/routers/{reservations,restaurants}.py`, `app/schemas/reservation.py`, `scripts/traffic.py`, `tests/{conftest,test_api,test_name_migration}.py` |
+| **Aung Thiha** | `app/db/mongo.py`, `app/routers/products.py`, `app/schemas/product.py`, `scripts/{seed,backfill_names}.py`, `tests/test_backfill.py` |
+| **Win Moe Aung** | `docker-compose.yml`, `app/{main,config,migration}.py`, `app/services/orders.py`, `app/routers/{orders,admin}.py`, `scripts/phase.py`, `tests/test_admin_migration.py`, `frontend/`, `README.md`, `docs/`, branch and release management |
 
 Need a change in someone else's file? Message them first.
 
 ### Shared seams
 
-Five places where two members' work meets. Change one without telling the other and integration breaks.
+Six places where two members' work meets. Change one without telling the other and integration breaks.
 
 | Seam | Between | Contract |
 |---|---|---|
@@ -80,6 +80,7 @@ Five places where two members' work meets. Change one without telling the other 
 | `CurrentUser` | Aung Hein's `security.py` ↔ all routers | annotated FastAPI dependency |
 | `split_guest_name` | Joe's service ↔ Thiha's backfill | **imported, never copy-pasted** |
 | Pagination envelope | Thiha's products ↔ Win Moe's frontend | `{items, page, limit, total, pages}` |
+| Migration phase | Win Moe's `app/migration.py` ↔ Joe's service, Thiha's backfill, Aung Hein's model | `write_columns()` / `read_columns()` / `name_mismatch()`; name columns stay deferred |
 
 ---
 
