@@ -9,6 +9,7 @@ Usage:
     python scripts/seed.py            # seed (idempotent, skips if present)
     python scripts/seed.py --reset    # wipe both databases first
     python scripts/seed.py --verify   # count only, no writes
+    python scripts/seed.py --reset --reservations 20000   # CP2 demo volume
 
 REPRODUCIBILITY
     Faker is seeded with a fixed value, so every teammate's database holds
@@ -38,10 +39,11 @@ import bcrypt  # noqa: E402
 from bson import ObjectId  # noqa: E402
 from faker import Faker  # noqa: E402
 from pymongo import MongoClient, UpdateOne  # noqa: E402
-from sqlalchemy import create_engine, func, select, text  # noqa: E402
+from sqlalchemy import create_engine, func, inspect, select, text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from app.services.reservations import split_guest_name  # noqa: E402
 from app.models import (  # noqa: E402
     Order,
     OrderItem,
@@ -102,7 +104,7 @@ def stable_oid(kind: str, n: int) -> ObjectId:
 # --------------------------------------------------------------- PostgreSQL
 
 
-def seed_postgres(session: Session) -> dict[str, int]:
+def seed_postgres(session: Session, n_reservations: int = N_RESERVATIONS) -> dict[str, int]:
     print("  PostgreSQL...")
 
     # --- users ---
@@ -175,7 +177,18 @@ def seed_postgres(session: Session) -> dict[str, int]:
     reservations: list[Reservation] = []
     attempts = 0
 
-    while len(reservations) < N_RESERVATIONS and attempts < N_RESERVATIONS * 20:
+    # Seeded bookings are LEGACY data - guest_name only - so the CP2 backfill
+    # has real rows to migrate. Only on a contracted schema (0004, no
+    # guest_name) are the new columns written instead.
+    columns = {c["name"] for c in inspect(session.connection()).get_columns("reservations")}
+
+    def guest_columns(name: str) -> dict[str, str]:
+        if "guest_name" in columns:
+            return {"guest_name": name}
+        first, last = split_guest_name(name)
+        return {"first_name": first, "last_name": last}
+
+    while len(reservations) < n_reservations and attempts < n_reservations * 20:
         attempts += 1
         restaurant = random.choice(restaurants)
         table = random.choice(tables_by_restaurant[restaurant.id])
@@ -189,19 +202,12 @@ def seed_postgres(session: Session) -> dict[str, int]:
 
         hour, minute = [(17, 0), (18, 30), (20, 0), (21, 30), (12, 0), (13, 30)][slot]
         starts = base + timedelta(days=day, hours=hour, minutes=minute)
-        guest = fake.name()
-
         reservations.append(
             Reservation(
+                **guest_columns(fake.name()),
                 user_id=random.choice(customers).id,
                 restaurant_id=restaurant.id,
                 restaurant_table_id=table.id,
-                # Dual-write from day one: the legacy column and both new
-                # columns are populated, so the read switch has data to
-                # switch to.
-                guest_name=guest,
-                first_name=guest.split(" ")[0][:60],
-                last_name=" ".join(guest.split(" ")[1:])[:60],
                 party_size=random.randint(1, min(table.capacity, 8)),
                 starts_at=starts,
                 ends_at=starts + timedelta(minutes=90),
@@ -466,6 +472,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Seed TableFlow databases")
     parser.add_argument("--reset", action="store_true", help="wipe both databases first")
     parser.add_argument("--verify", action="store_true", help="count only, no writes")
+    parser.add_argument(
+        "--reservations", type=int, default=N_RESERVATIONS,
+        help="legacy bookings to create; raise it so the CP2 backfill runs long enough to watch",
+    )
     args = parser.parse_args()
 
     engine = create_engine(settings.postgres_sync_dsn)
@@ -489,7 +499,7 @@ def main() -> int:
             return 0
 
         print("Seeding (this takes ~20s)...")
-        pg = seed_postgres(session)
+        pg = seed_postgres(session, args.reservations)
         mg = seed_mongo(db)
 
         print(f"\n  PostgreSQL rows: {sum(pg.values()):,}")
