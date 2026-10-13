@@ -1,4 +1,4 @@
-"""Orders: status changes under a row lock.
+"""Orders: status changes under a row lock, and the one-query order list.
 
 Requests that merely run at the same time rarely overlap: each transaction
 lasts about a millisecond. So the race tests hold the order's row lock
@@ -118,3 +118,20 @@ async def test_illegal_transition_returns_409(client, staff, place_order):
 async def test_customer_cannot_change_status(client, auth_headers, place_order):
     order = await place_order()
     assert await move(client, auth_headers, order["id"], "preparing") == 403
+
+
+async def test_list_my_orders_summarises_in_sql(client, auth_headers, place_order):
+    first = await place_order(lines=1)
+    second = await place_order(lines=2)
+
+    r = await client.get("/api/v1/orders", headers=auth_headers)
+    assert r.status_code == 200
+    listed = r.json()
+    assert [o["id"] for o in listed] == [second["id"], first["id"]]
+    assert [o["item_count"] for o in listed] == [len(second["items"]), 1]
+    assert listed[0]["restaurant_name"]
+    assert "items" not in listed[0]
+
+
+async def test_list_my_orders_requires_auth(client):
+    assert (await client.get("/api/v1/orders")).status_code == 401
