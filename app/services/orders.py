@@ -18,6 +18,24 @@ to roll back a paid order.
 
 Prices come from MongoDB, never from the request. A client-supplied price
 is a free-lunch vulnerability.
+
+STATUS CHANGES: PESSIMISTIC LOCKING
+-----------------------------------
+An order moves through a fixed set of transitions (TRANSITIONS below), and
+whether a move is legal depends on the status at the moment of the write.
+Read-check-write without a lock races: two staff press "ready" and
+"cancelled" together, both read "preparing", both pass the check, and the
+last write wins - an order the customer was told is cancelled shows ready.
+
+advance_status() reads the status with SELECT ... FOR UPDATE. The second
+request blocks on the row lock until the first commits, then reads the new
+status and is refused with 409. The lock is held for one short transaction
+inside one request, so it costs nothing measurable.
+
+Why not optimistic, as for reservation edits? There the read happened in a
+browser minutes earlier and no lock can span HTTP requests. Here read and
+write are milliseconds apart in the same transaction, and waiting gives the
+loser an exact answer ("already cancelled") instead of "retry".
 """
 
 from __future__ import annotations
@@ -29,17 +47,25 @@ from decimal import Decimal
 from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import mongo
-from app.models.order import Order, OrderItem
+from app.models.order import Order, OrderItem, OrderStatus
 from app.models.reservation import Reservation
 from app.models.restaurant import Restaurant
 from app.models.user import User
 from app.schemas.order import OrderCreate
 
 log = logging.getLogger(__name__)
+
+TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
+    OrderStatus.PLACED: frozenset({OrderStatus.PREPARING, OrderStatus.CANCELLED}),
+    OrderStatus.PREPARING: frozenset({OrderStatus.READY, OrderStatus.CANCELLED}),
+    OrderStatus.READY: frozenset({OrderStatus.COMPLETED}),
+    OrderStatus.COMPLETED: frozenset(),
+    OrderStatus.CANCELLED: frozenset(),
+}
 
 
 async def create_order(session: AsyncSession, user: User, payload: OrderCreate) -> Order:
@@ -151,3 +177,25 @@ async def create_order(session: AsyncSession, user: User, payload: OrderCreate) 
         log.warning("telemetry write failed for order %s", order.id, exc_info=True)
 
     return order
+
+
+async def advance_status(session: AsyncSession, order_id: int, new: OrderStatus) -> Order:
+    """Move an order to `new` if that is a legal transition from its CURRENT
+    status. The status is read under a row lock; see the module docstring."""
+    current = await session.scalar(
+        select(Order.status).where(Order.id == order_id).with_for_update()
+    )
+    if current is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    if new not in TRANSITIONS[current]:
+        await session.rollback()   # release the lock before answering
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Order is {current.value}; it cannot move to {new.value}",
+        )
+
+    await session.execute(update(Order).where(Order.id == order_id).values(status=new))
+    await session.commit()   # releases the lock
+    return await session.scalar(
+        select(Order).where(Order.id == order_id).execution_options(populate_existing=True)
+    )

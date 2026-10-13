@@ -1,6 +1,8 @@
 """Orders router - the dual-database endpoint.
 
-    POST /api/v1/orders   -> 201, PostgreSQL + MongoDB
+    POST  /api/v1/orders              -> 201, PostgreSQL + MongoDB
+    GET   /api/v1/orders/{id}         -> 200
+    PATCH /api/v1/orders/{id}/status  -> 200, or 409 for an illegal transition
 
 The flow and its failure semantics live in app/services/orders.py.
 """
@@ -60,16 +62,14 @@ async def get_order(order_id: int, session: Session, current: CurrentUser) -> Or
     "/{order_id}/status",
     response_model=OrderOut,
     dependencies=[Depends(require_role(UserRole.STAFF, UserRole.ADMIN))],
+    responses={409: {"description": "Not a legal transition from the current status"}},
 )
 async def update_status(
     order_id: int, payload: OrderStatusUpdate, session: Session
 ) -> Order:
-    """Advance an order through the kitchen. Staff/admin only."""
-    order = await session.scalar(select(Order).where(Order.id == order_id))
-    if order is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    """Advance an order through the kitchen. Staff/admin only.
 
-    order.status = payload.status
-    await session.commit()
-    await session.refresh(order)
-    return order
+    placed -> preparing -> ready -> completed; placed or preparing ->
+    cancelled. Concurrent changes are serialized by a row lock.
+    """
+    return await order_service.advance_status(session, order_id, payload.status)
