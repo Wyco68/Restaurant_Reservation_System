@@ -54,5 +54,21 @@ class OrderOut(BaseModel):
     items: list[OrderItemOut]
 
 
+class OrderSummary(BaseModel):
+    """GET /orders row - aggregated in SQL, no line items carried."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    restaurant_id: int
+    restaurant_name: str
+    reservation_id: int | None
+    status: OrderStatus
+    total_amount: Decimal
+    currency: str
+    created_at: datetime
+    item_count: int
+
+
 class OrderStatusUpdate(BaseModel):
     status: OrderStatus

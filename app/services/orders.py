@@ -47,7 +47,7 @@ from decimal import Decimal
 from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import mongo
@@ -198,4 +198,30 @@ async def advance_status(session: AsyncSession, order_id: int, new: OrderStatus)
     await session.commit()   # releases the lock
     return await session.scalar(
         select(Order).where(Order.id == order_id).execution_options(populate_existing=True)
+    )
+
+
+def select_my_orders(user_id, limit: int) -> Select:
+    """List summary in ONE query: JOIN for the restaurant name, GROUP BY for
+    the line count. Loading Order entities would add one SELECT for the
+    items (selectin) and carry every line item to compute a count; one
+    query per order for either would be N+1."""
+    return (
+        select(
+            Order.id,
+            Order.restaurant_id,
+            Restaurant.name.label("restaurant_name"),
+            Order.reservation_id,
+            Order.status,
+            Order.total_amount,
+            Order.currency,
+            Order.created_at,
+            func.count(OrderItem.id).label("item_count"),
+        )
+        .join(Restaurant, Restaurant.id == Order.restaurant_id)
+        .outerjoin(OrderItem, OrderItem.order_id == Order.id)
+        .where(Order.user_id == user_id)
+        .group_by(Order.id, Restaurant.name)
+        .order_by(Order.created_at.desc(), Order.id.desc())
+        .limit(limit)
     )

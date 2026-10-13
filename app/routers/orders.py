@@ -1,6 +1,7 @@
 """Orders router - the dual-database endpoint.
 
     POST  /api/v1/orders              -> 201, PostgreSQL + MongoDB
+    GET   /api/v1/orders              -> 200, the caller's orders, one query
     GET   /api/v1/orders/{id}         -> 200
     PATCH /api/v1/orders/{id}/status  -> 200, or 409 for an illegal transition
 
@@ -11,14 +12,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_session
 from app.models.order import Order
 from app.models.user import UserRole
-from app.schemas.order import OrderCreate, OrderOut, OrderStatusUpdate
+from app.schemas.order import OrderCreate, OrderOut, OrderStatusUpdate, OrderSummary
 from app.security import CurrentUser, require_role
 from app.services import orders as order_service
 
@@ -46,6 +47,21 @@ async def create_order(payload: OrderCreate, session: Session, current: CurrentU
     are never taken from the request body.
     """
     return await order_service.create_order(session, current, payload)
+
+
+@router.get(
+    "",
+    response_model=list[OrderSummary],
+    responses={401: {"description": "Missing or invalid token"}},
+)
+async def list_my_orders(
+    session: Session,
+    current: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> list[OrderSummary]:
+    """The caller's orders, newest first. One SQL query whatever the count."""
+    rows = await session.execute(order_service.select_my_orders(current.id, limit))
+    return [OrderSummary.model_validate(r) for r in rows]
 
 
 @router.get("/{order_id}", response_model=OrderOut)
