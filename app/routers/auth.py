@@ -29,6 +29,9 @@ async def login(payload: LoginRequest, session: Session) -> TokenResponse:
             )
         )
     ).first()
+    # End the transaction before the 0.2 s of bcrypt, so the pooled
+    # connection goes back to other requests instead of idling here.
+    await session.rollback()
 
     # One generic message for "no such user" and "wrong password". Telling
     # them apart turns this endpoint into an account-existence oracle.
