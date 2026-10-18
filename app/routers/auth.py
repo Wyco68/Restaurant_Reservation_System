@@ -21,7 +21,14 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, session: Session) -> TokenResponse:
-    user = await session.scalar(select(User).where(User.email == payload.email))
+    # PROJECTION: the four columns a login decision needs, not the profile.
+    user = (
+        await session.execute(
+            select(User.id, User.password_hash, User.role, User.is_active).where(
+                User.email == payload.email
+            )
+        )
+    ).first()
 
     # One generic message for "no such user" and "wrong password". Telling
     # them apart turns this endpoint into an account-existence oracle.
