@@ -25,7 +25,7 @@ async def login(payload: LoginRequest, session: Session) -> TokenResponse:
 
     # One generic message for "no such user" and "wrong password". Telling
     # them apart turns this endpoint into an account-existence oracle.
-    if user is None or not verify_password(payload.password, user.password_hash):
+    if user is None or not await verify_password(payload.password, user.password_hash):
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Invalid email or password",

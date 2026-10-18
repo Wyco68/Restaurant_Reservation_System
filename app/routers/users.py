@@ -38,7 +38,7 @@ async def create_user(payload: UserCreate, session: Session) -> User:
     """Register an account. Public - this is the one endpoint before auth."""
     user = User(
         email=payload.email,
-        password_hash=hash_password(payload.password),
+        password_hash=await hash_password(payload.password),
         full_name=payload.full_name,
         phone=payload.phone,
         role=UserRole.CUSTOMER,

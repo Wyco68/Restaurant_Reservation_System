@@ -16,6 +16,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
 from app.db.postgres import get_session
@@ -25,18 +26,29 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 # --- Password hashing -----------------------------------------------------
+# bcrypt is deliberately slow (~0.2 s per call at the default cost 12). Run on
+# the event loop, one login freezes every other request for that long, so
+# both calls go to a worker thread; bcrypt releases the GIL while it hashes.
 
 
-def hash_password(plain: str) -> str:
+def _hash(plain: str) -> str:
     return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
-def verify_password(plain: str, hashed: str) -> bool:
+def _check(plain: str, hashed: str) -> bool:
     try:
         return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
     except (ValueError, TypeError):
         # Malformed hash in the database: fail closed, never fail open.
         return False
+
+
+async def hash_password(plain: str) -> str:
+    return await run_in_threadpool(_hash, plain)
+
+
+async def verify_password(plain: str, hashed: str) -> bool:
+    return await run_in_threadpool(_check, plain, hashed)
 
 
 # --- JWT ------------------------------------------------------------------
