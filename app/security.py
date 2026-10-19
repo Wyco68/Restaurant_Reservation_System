@@ -16,6 +16,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
@@ -71,6 +72,14 @@ def decode_access_token(token: str) -> dict:
 
 # --- FastAPI dependencies -------------------------------------------------
 
+# PROJECTION: what a request needs to know about its caller. password_hash is
+# left on disk - only /auth/login ever reads it - and raiseload makes any
+# code that touches it fail loudly instead of quietly querying for it.
+PROFILE = load_only(
+    User.id, User.email, User.full_name, User.phone, User.role, User.is_active,
+    User.created_at, raiseload=True,
+)
+
 _UNAUTHORIZED = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
     detail="Not authenticated",
@@ -97,7 +106,7 @@ async def get_current_user(
     except (jwt.PyJWTError, KeyError, ValueError) as exc:
         raise _UNAUTHORIZED from exc
 
-    user = await session.scalar(select(User).where(User.id == user_id))
+    user = await session.scalar(select(User).options(PROFILE).where(User.id == user_id))
     if user is None or not user.is_active:
         raise _UNAUTHORIZED
     return user

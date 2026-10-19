@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.postgres import get_session
 from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserOut, UserUpdate
-from app.security import CurrentUser, hash_password
+from app.security import PROFILE, CurrentUser, hash_password
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
@@ -76,7 +76,7 @@ async def get_user(user_id: uuid.UUID, session: Session, current: CurrentUser) -
     if current.role == UserRole.CUSTOMER and current.id != user_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Cannot read another user's account")
 
-    user = await session.scalar(select(User).where(User.id == user_id))
+    user = await session.scalar(select(User).options(PROFILE).where(User.id == user_id))
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     return user
