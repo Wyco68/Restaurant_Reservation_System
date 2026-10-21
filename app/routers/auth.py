@@ -21,11 +21,21 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, session: Session) -> TokenResponse:
-    user = await session.scalar(select(User).where(User.email == payload.email))
+    # PROJECTION: the four columns a login decision needs, not the profile.
+    user = (
+        await session.execute(
+            select(User.id, User.password_hash, User.role, User.is_active).where(
+                User.email == payload.email
+            )
+        )
+    ).first()
+    # End the transaction before the 0.2 s of bcrypt, so the pooled
+    # connection goes back to other requests instead of idling here.
+    await session.rollback()
 
     # One generic message for "no such user" and "wrong password". Telling
     # them apart turns this endpoint into an account-existence oracle.
-    if user is None or not verify_password(payload.password, user.password_hash):
+    if user is None or not await verify_password(payload.password, user.password_hash):
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Invalid email or password",

@@ -16,6 +16,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
 from app.db.postgres import get_session
@@ -25,18 +27,29 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 # --- Password hashing -----------------------------------------------------
+# bcrypt is deliberately slow (~0.2 s per call at the default cost 12). Run on
+# the event loop, one login freezes every other request for that long, so
+# both calls go to a worker thread; bcrypt releases the GIL while it hashes.
 
 
-def hash_password(plain: str) -> str:
+def _hash(plain: str) -> str:
     return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
-def verify_password(plain: str, hashed: str) -> bool:
+def _check(plain: str, hashed: str) -> bool:
     try:
         return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
     except (ValueError, TypeError):
         # Malformed hash in the database: fail closed, never fail open.
         return False
+
+
+async def hash_password(plain: str) -> str:
+    return await run_in_threadpool(_hash, plain)
+
+
+async def verify_password(plain: str, hashed: str) -> bool:
+    return await run_in_threadpool(_check, plain, hashed)
 
 
 # --- JWT ------------------------------------------------------------------
@@ -58,6 +71,14 @@ def decode_access_token(token: str) -> dict:
 
 
 # --- FastAPI dependencies -------------------------------------------------
+
+# PROJECTION: what a request needs to know about its caller. password_hash is
+# left on disk - only /auth/login ever reads it - and raiseload makes any
+# code that touches it fail loudly instead of quietly querying for it.
+PROFILE = load_only(
+    User.id, User.email, User.full_name, User.phone, User.role, User.is_active,
+    User.created_at, raiseload=True,
+)
 
 _UNAUTHORIZED = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -85,7 +106,7 @@ async def get_current_user(
     except (jwt.PyJWTError, KeyError, ValueError) as exc:
         raise _UNAUTHORIZED from exc
 
-    user = await session.scalar(select(User).where(User.id == user_id))
+    user = await session.scalar(select(User).options(PROFILE).where(User.id == user_id))
     if user is None or not user.is_active:
         raise _UNAUTHORIZED
     return user

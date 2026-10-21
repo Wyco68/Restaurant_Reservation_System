@@ -2,7 +2,8 @@
 
 This table carries both hard problems:
   * zero-downtime migration: guest_name -> first_name / last_name
-  * concurrency control:     the no_double_booking EXCLUDE constraint
+  * concurrency control:     the no_double_booking EXCLUDE constraint on
+                             INSERT, the xmin version check on UPDATE
 """
 
 from __future__ import annotations
@@ -25,8 +26,23 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import UserDefinedType
 
 from app.models.base import Base, TimestampMixin
+
+
+class Xid(UserDefinedType):
+    """PostgreSQL's 32-bit transaction id type.
+
+    Declared so the version check binds its parameter as xid. Mapped as
+    String it would be sent as VARCHAR, and PostgreSQL has no xid = varchar
+    operator.
+    """
+
+    cache_ok = True
+
+    def get_col_spec(self, **kw) -> str:
+        return "xid"
 
 
 class ReservationStatus(str, enum.Enum):
@@ -94,11 +110,33 @@ class Reservation(Base, TimestampMixin):
         server_default=ReservationStatus.PENDING.value,
     )
 
+    # --- Optimistic concurrency token --------------------------------------
+    # xmin is the system column holding the id of the transaction that wrote
+    # this row version. PostgreSQL changes it on EVERY update - from the API,
+    # the backfill script or psql - so no writer can forget to bump it. That
+    # is the same reason double-booking is an EXCLUDE constraint rather than
+    # application code. No migration: every table already has xmin, so this
+    # works on every schema from 0001 to 0004.
+    #
+    # As version_id_col, every ORM UPDATE becomes
+    #     UPDATE reservations SET ... WHERE id = :id AND xmin = :version_seen
+    # and matching 0 rows raises StaleDataError - another transaction changed
+    # the row after this one read it. The API turns that into 409.
+    version: Mapped[str] = mapped_column(
+        "xmin", Xid, system=True, server_default=FetchedValue()
+    )
+
     user: Mapped["User"] = relationship(back_populates="reservations")  # noqa: F821
 
-    # Without this, SQLAlchemy 2.x adds every FetchedValue column to the
-    # INSERT's RETURNING clause - naming the very columns that may not exist.
-    __mapper_args__ = {"eager_defaults": False}
+    __mapper_args__ = {
+        # Without this, SQLAlchemy 2.x adds every FetchedValue column to the
+        # INSERT's RETURNING clause - naming the very columns that may not
+        # exist. The version column is still returned: the ORM asks for it.
+        "eager_defaults": False,
+        "version_id_col": version,
+        # PostgreSQL generates the next value, not Python.
+        "version_id_generator": False,
+    }
 
     __table_args__ = (
         CheckConstraint("party_size > 0 AND party_size <= 20", name="ck_reservations_party"),
