@@ -351,6 +351,26 @@ async def test_list_reservations_returns_only_own(
     assert [b["id"] for b in listed] == [created.json()["id"]]
 
 
+async def test_reservation_read_carries_etag(client: AsyncClient, auth_headers: dict, free_slot):
+    restaurant_id, table_id, start = await free_slot()
+    created = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": restaurant_id,
+            "restaurant_table_id": table_id,
+            "guest_name": "Etag Check",
+            "party_size": 2,
+            "starts_at": start.isoformat(),
+            "ends_at": (start + timedelta(minutes=90)).isoformat(),
+        },
+        headers=auth_headers,
+    )
+    assert created.headers["ETag"] == f'"{created.json()["version"]}"'
+
+    r = await client.get(f"/api/v1/reservations/{created.json()['id']}", headers=auth_headers)
+    assert r.headers["ETag"] == created.headers["ETag"]
+
+
 # ------------------------------------------------- migration helper logic
 
 
