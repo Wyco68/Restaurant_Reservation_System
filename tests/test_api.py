@@ -7,6 +7,7 @@ Covers every core endpoint and the full status-code surface:
 from __future__ import annotations
 
 import asyncio
+import random
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -234,9 +235,11 @@ async def test_concurrent_booking_allows_exactly_one(
         pytest.skip("no seeded restaurants - run scripts/seed.py")
     restaurant_id = restaurants[0]["id"]
 
-    start = datetime.now(UTC).replace(
-        minute=0, second=0, microsecond=0
-    ) + timedelta(days=900)
+    # A random far-future hour: a fixed one runs out of free tables after a
+    # few reruns in the same hour.
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
+        days=random.randint(2_000, 9_000), hours=random.randint(0, 23)
+    )
 
     avail = await client.get(
         f"/api/v1/restaurants/{restaurant_id}/availability",
@@ -313,7 +316,9 @@ async def test_list_reservations_returns_only_own(
     if not restaurants:
         pytest.skip("no seeded restaurants - run scripts/seed.py")
     restaurant_id = restaurants[0]["id"]
-    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(days=902)
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
+        days=random.randint(2_000, 9_000), hours=random.randint(0, 23)
+    )
     end = start + timedelta(minutes=90)
     slots = [
         s
