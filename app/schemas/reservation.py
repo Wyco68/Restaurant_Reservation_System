@@ -57,3 +57,6 @@ class ReservationOut(BaseModel):
     ends_at: datetime
     status: ReservationStatus
     created_at: datetime
+    # Row version for optimistic concurrency. Also sent as the ETag header;
+    # send it back as If-Match to PATCH.
+    version: int

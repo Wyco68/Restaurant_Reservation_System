@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_session
 from app.models.reservation import Reservation
 from app.models.user import UserRole
-from app.schemas.reservation import ReservationCreate, ReservationOut, ReservationUpdate
+from app.schemas.reservation import (
+    ReservationCreate,
+    ReservationOut,
+    ReservationUpdate,
+)
 from app.security import CurrentUser
 from app.services import reservations as svc
 
@@ -44,7 +48,7 @@ async def _load_owned(
     },
 )
 async def create_reservation(
-    payload: ReservationCreate, session: Session, current: CurrentUser
+    payload: ReservationCreate, session: Session, current: CurrentUser, response: Response
 ) -> ReservationOut:
     """Book a table.
 
@@ -53,6 +57,7 @@ async def create_reservation(
     EXCLUDE constraint, not by application-level checking.
     """
     reservation = await svc.create_reservation(session, current, payload)
+    response.headers["ETag"] = svc.etag(reservation)
     return svc.to_out(reservation)
 
 
@@ -77,9 +82,10 @@ async def list_my_reservations(session: Session, current: CurrentUser) -> list[R
 
 @router.get("/{reservation_id}", response_model=ReservationOut)
 async def get_reservation(
-    reservation_id: int, session: Session, current: CurrentUser
+    reservation_id: int, session: Session, current: CurrentUser, response: Response
 ) -> ReservationOut:
     reservation = await _load_owned(reservation_id, session, current)
+    response.headers["ETag"] = svc.etag(reservation)
     return svc.to_out(reservation)
 
 
@@ -89,16 +95,18 @@ async def update_reservation(
     payload: ReservationUpdate,
     session: Session,
     current: CurrentUser,
+    response: Response,
 ) -> ReservationOut:
     """Partial update. A new guest_name is dual-written, same as on create."""
     reservation = await _load_owned(reservation_id, session, current)
     reservation = await svc.update_reservation(session, reservation, payload)
+    response.headers["ETag"] = svc.etag(reservation)
     return svc.to_out(reservation)
 
 
 @router.delete("/{reservation_id}", response_model=ReservationOut)
 async def cancel_reservation(
-    reservation_id: int, session: Session, current: CurrentUser
+    reservation_id: int, session: Session, current: CurrentUser, response: Response
 ) -> ReservationOut:
     """Cancel a reservation.
 
@@ -108,4 +116,5 @@ async def cancel_reservation(
     """
     reservation = await _load_owned(reservation_id, session, current)
     reservation = await svc.cancel_reservation(session, reservation)
+    response.headers["ETag"] = svc.etag(reservation)
     return svc.to_out(reservation)

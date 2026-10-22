@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import logging
 
+from typing import Any
+
 from fastapi import HTTPException, status
 from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
@@ -42,7 +44,11 @@ from app import migration
 from app.models.reservation import Reservation, ReservationStatus
 from app.models.restaurant import RestaurantTable
 from app.models.user import User
-from app.schemas.reservation import ReservationCreate, ReservationOut, ReservationUpdate
+from app.schemas.reservation import (
+    ReservationCreate,
+    ReservationOut,
+    ReservationUpdate,
+)
 
 log = logging.getLogger(__name__)
 
@@ -91,8 +97,8 @@ async def reload(session: AsyncSession, r: Reservation) -> Reservation:
     )
 
 
-def to_out(r: Reservation) -> ReservationOut:
-    """Build the response body.
+def _fields(r: Any) -> dict[str, Any]:
+    """Response fields from a Reservation or a projected row - same names.
 
     THIS IS THE SWITCH-READ POINT. Before read_new the name comes from
     guest_name; from read_new on it comes from first_name / last_name only -
@@ -104,18 +110,27 @@ def to_out(r: Reservation) -> ReservationOut:
     else:
         guest_name = " ".join(p for p in (r.first_name, r.last_name) if p)
 
-    return ReservationOut(
-        id=r.id,
-        user_id=r.user_id,
-        restaurant_id=r.restaurant_id,
-        restaurant_table_id=r.restaurant_table_id,
-        guest_name=guest_name,
-        party_size=r.party_size,
-        starts_at=r.starts_at,
-        ends_at=r.ends_at,
-        status=r.status,
-        created_at=r.created_at,
-    )
+    return {
+        "id": r.id,
+        "user_id": r.user_id,
+        "restaurant_id": r.restaurant_id,
+        "restaurant_table_id": r.restaurant_table_id,
+        "guest_name": guest_name,
+        "party_size": r.party_size,
+        "starts_at": r.starts_at,
+        "ends_at": r.ends_at,
+        "status": r.status,
+        "created_at": r.created_at,
+        "version": int(r.version),
+    }
+
+
+def to_out(r: Reservation) -> ReservationOut:
+    return ReservationOut(**_fields(r))
+
+
+def etag(r: Reservation) -> str:
+    return f'"{r.version}"'
 
 
 async def create_reservation(
@@ -171,7 +186,9 @@ async def create_reservation(
 async def update_reservation(
     session: AsyncSession, reservation: Reservation, payload: ReservationUpdate
 ) -> Reservation:
-    """Apply a partial update. A new guest_name is dual-written like a create."""
+    """Apply a partial update. A new guest_name is dual-written like a create.
+
+    """
     if payload.guest_name is not None:
         write_name(reservation, payload.guest_name)
     if payload.party_size is not None:
