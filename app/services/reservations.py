@@ -26,6 +26,18 @@ in application code, and any future code path that forgets to take the lock
 silently reintroduces the bug. With the constraint, overlap is structurally
 impossible regardless of how many code paths write reservations. See
 docs/DESIGN.md for the full comparison.
+
+Edits are protected by optimistic concurrency (OCC). Every response carries
+the row's version (PostgreSQL's xmin, see the model). A PATCH must send it
+back in If-Match:
+
+    no If-Match                       -> 428, the client must say what it saw
+    If-Match is not the stored version -> 412, someone changed it since
+    changed between our read and write -> 409, a concurrent request won
+
+Either way the client re-reads and retries; nothing is silently overwritten.
+A lock cannot do this job: the read happened in the client's browser,
+minutes and several HTTP requests before the write.
 """
 
 from __future__ import annotations
@@ -131,6 +143,27 @@ def to_out(r: Reservation) -> ReservationOut:
 
 def etag(r: Reservation) -> str:
     return f'"{r.version}"'
+
+
+def check_if_match(r: Reservation, if_match: str | None, *, required: bool) -> None:
+    """Compare the client's If-Match with the version just read.
+
+    Accepts the forms RFC 9110 allows: "123", W/"123", a comma-separated
+    list, or * (any version).
+    """
+    if if_match is None:
+        if required:
+            raise HTTPException(
+                status.HTTP_428_PRECONDITION_REQUIRED,
+                "Send If-Match with the reservation's version (its ETag)",
+            )
+        return
+    seen = {t.strip().removeprefix("W/").strip('"') for t in if_match.split(",")}
+    if "*" not in seen and str(r.version) not in seen:
+        raise HTTPException(
+            status.HTTP_412_PRECONDITION_FAILED,
+            f"Reservation changed since you read it; current version is {r.version}",
+        )
 
 
 async def create_reservation(
