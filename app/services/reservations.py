@@ -51,6 +51,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
+from sqlalchemy.orm.exc import StaleDataError
 
 from app import migration
 from app.models.reservation import Reservation, ReservationStatus
@@ -166,6 +167,24 @@ def check_if_match(r: Reservation, if_match: str | None, *, required: bool) -> N
         )
 
 
+async def _commit_versioned(session: AsyncSession) -> None:
+    """Commit an UPDATE guarded by the version check.
+
+    StaleDataError means the UPDATE matched 0 rows: between this request's
+    read and its write, another transaction committed a change, so xmin no
+    longer equals what was read. Under READ COMMITTED the loser waits on the
+    winner's row lock, then re-checks the WHERE against the new row version.
+    """
+    try:
+        await session.commit()
+    except StaleDataError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Reservation was changed by a concurrent request; re-read and retry",
+        ) from exc
+
+
 async def create_reservation(
     session: AsyncSession, user: User, payload: ReservationCreate
 ) -> Reservation:
@@ -221,6 +240,8 @@ async def update_reservation(
 ) -> Reservation:
     """Apply a partial update. A new guest_name is dual-written like a create.
 
+    The caller has already checked If-Match; the version check in the UPDATE
+    catches a writer that slipped in after that.
     """
     if payload.guest_name is not None:
         write_name(reservation, payload.guest_name)
@@ -229,7 +250,7 @@ async def update_reservation(
     if payload.status is not None:
         reservation.status = payload.status
 
-    await session.commit()
+    await _commit_versioned(session)
     return await reload(session, reservation)
 
 
@@ -243,5 +264,5 @@ async def cancel_reservation(
     row is deleted - cancellation history is retained.
     """
     reservation.status = ReservationStatus.CANCELLED
-    await session.commit()
+    await _commit_versioned(session)
     return await reload(session, reservation)
