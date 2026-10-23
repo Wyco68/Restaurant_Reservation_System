@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_session
@@ -13,6 +13,7 @@ from app.models.reservation import Reservation
 from app.models.user import UserRole
 from app.schemas.reservation import (
     ReservationCreate,
+    ReservationListItem,
     ReservationOut,
     ReservationUpdate,
 )
@@ -65,21 +66,22 @@ async def create_reservation(
 
 @router.get(
     "",
-    response_model=list[ReservationOut],
+    response_model=list[ReservationListItem],
     responses={401: {"description": "Missing or invalid token"}},
 )
-async def list_my_reservations(session: Session, current: CurrentUser) -> list[ReservationOut]:
+async def list_my_reservations(
+    session: Session,
+    current: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> list[ReservationListItem]:
     """The signed-in user's own reservations, latest first, cancelled included.
 
     Always scoped to the caller - staff read other users' bookings one at a
-    time through GET /{id}, never as a bulk list.
+    time through GET /{id}, never as a bulk list. One SQL query whatever the
+    number of bookings: see svc.select_my_bookings.
     """
-    rows = await session.scalars(
-        svc.select_reservations()
-        .where(Reservation.user_id == current.id)
-        .order_by(Reservation.starts_at.desc())
-    )
-    return [svc.to_out(r) for r in rows]
+    rows = await session.execute(svc.select_my_bookings(current.id, limit))
+    return [svc.to_list_item(row) for row in rows]
 
 
 @router.get("/{reservation_id}", response_model=ReservationOut)

@@ -60,3 +60,10 @@ class ReservationOut(BaseModel):
     # Row version for optimistic concurrency. Also sent as the ETag header;
     # send it back as If-Match to PATCH.
     version: int
+
+
+class ReservationListItem(ReservationOut):
+    """GET /reservations row: one JOINed query, so the client never has to
+    fetch each restaurant to show its name."""
+
+    restaurant_name: str

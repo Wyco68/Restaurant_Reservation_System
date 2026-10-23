@@ -349,6 +349,9 @@ async def test_list_reservations_returns_only_own(
 
     listed = (await client.get("/api/v1/reservations", headers=auth_headers)).json()
     assert [b["id"] for b in listed] == [created.json()["id"]]
+    # Joined in the same query, so the client need not fetch the restaurant.
+    assert listed[0]["restaurant_name"] == restaurants[0]["name"]
+    assert listed[0]["version"] == created.json()["version"]
 
 
 async def test_reservation_read_carries_etag(client: AsyncClient, auth_headers: dict, free_slot):

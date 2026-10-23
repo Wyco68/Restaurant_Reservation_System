@@ -55,10 +55,11 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app import migration
 from app.models.reservation import Reservation, ReservationStatus
-from app.models.restaurant import RestaurantTable
+from app.models.restaurant import Restaurant, RestaurantTable
 from app.models.user import User
 from app.schemas.reservation import (
     ReservationCreate,
+    ReservationListItem,
     ReservationOut,
     ReservationUpdate,
 )
@@ -90,6 +91,36 @@ def select_reservations() -> Select[tuple[Reservation]]:
     """
     return select(Reservation).options(
         *(undefer(getattr(Reservation, c)) for c in migration.read_columns())
+    )
+
+
+def select_my_bookings(user_id, limit: int) -> Select:
+    """PROJECTION for the "my bookings" list: one query, named columns only.
+
+    The restaurant name comes from a JOIN. Without it the client fetches
+    GET /restaurants/{id} once per distinct restaurant - an N+1 over HTTP.
+    Columns rather than entities: a list is read-only, so nothing needs the
+    ORM's identity map or change tracking.
+    """
+    return (
+        select(
+            Reservation.id,
+            Reservation.user_id,
+            Reservation.restaurant_id,
+            Restaurant.name.label("restaurant_name"),
+            Reservation.restaurant_table_id,
+            *(getattr(Reservation, c) for c in migration.read_columns()),
+            Reservation.party_size,
+            Reservation.starts_at,
+            Reservation.ends_at,
+            Reservation.status,
+            Reservation.created_at,
+            Reservation.version,
+        )
+        .join(Restaurant, Restaurant.id == Reservation.restaurant_id)
+        .where(Reservation.user_id == user_id)
+        .order_by(Reservation.starts_at.desc())
+        .limit(limit)
     )
 
 
@@ -140,6 +171,10 @@ def _fields(r: Any) -> dict[str, Any]:
 
 def to_out(r: Reservation) -> ReservationOut:
     return ReservationOut(**_fields(r))
+
+
+def to_list_item(row: Any) -> ReservationListItem:
+    return ReservationListItem(**_fields(row), restaurant_name=row.restaurant_name)
 
 
 def etag(r: Reservation) -> str:
