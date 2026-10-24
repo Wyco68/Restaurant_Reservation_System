@@ -153,6 +153,32 @@ async def test_twenty_customers_one_table_exactly_one_booking(api, customers, db
     assert held == 1
 
 
+async def test_repeated_booking_races_never_fail_with_500(api, customers):
+    """Concurrent INSERTs checked by the EXCLUDE constraint can deadlock;
+    PostgreSQL aborts one. That must come back as 201 or 409 after a retry,
+    never as a 500. One race deadlocks rarely, so run ten."""
+    seen = Counter()
+    for _ in range(10):
+        restaurant_id, table_id, start = await free_table(api)
+
+        async def attempt(headers: dict) -> int:
+            r = await api.post("/api/v1/reservations", headers=headers, json={
+                "restaurant_id": restaurant_id,
+                "restaurant_table_id": table_id,
+                "guest_name": "Repeat Race",
+                "party_size": 2,
+                "starts_at": start.isoformat(),
+                "ends_at": (start + timedelta(minutes=90)).isoformat(),
+            })
+            return r.status_code
+
+        codes = Counter(await asyncio.gather(*(attempt(h) for h in customers)))
+        seen += codes
+        assert codes[201] == 1, f"race produced {dict(codes)}"
+        assert codes[409] == USERS - 1, f"race produced {dict(codes)}"
+    print(f"\n  10 races x 20 customers -> {dict(seen)}")
+
+
 # ----------------------------------------- the same reservation, 20 edits
 
 

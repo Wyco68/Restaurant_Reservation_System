@@ -300,9 +300,11 @@ async def concurrent(burst: int) -> bool:
         headers = {"Authorization": f"Bearer {await login(client)}"}
         restaurant_id, table_id = await pick_table(client, headers)
 
-        start = datetime.now(UTC).replace(
-            minute=0, second=0, microsecond=0
-        ) + timedelta(days=500)
+        # A random far-future hour, so a rerun races for a free slot instead
+        # of the one the previous run already booked.
+        start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
+            days=random.randint(1_000, 20_000), hours=random.randint(0, 23)
+        )
         payload = booking_payload(restaurant_id, table_id, start, random.choice(NAMES))
 
         print(f"  firing {burst} simultaneous requests for table {table_id} at {start:%Y-%m-%d %H:%M}...")

@@ -42,13 +42,15 @@ minutes and several HTTP requests before the write.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 
 from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import Select, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 from sqlalchemy.orm.exc import StaleDataError
@@ -65,6 +67,9 @@ from app.schemas.reservation import (
 )
 
 log = logging.getLogger(__name__)
+
+DEADLOCK = "40P01"       # SQLSTATE deadlock_detected
+DEADLOCK_RETRIES = 5
 
 
 def split_guest_name(full: str) -> tuple[str, str]:
@@ -244,28 +249,48 @@ async def create_reservation(
             f"Party of {payload.party_size} exceeds table capacity of {table.capacity}",
         )
 
-    reservation = Reservation(
-        user_id=user.id,
-        restaurant_id=payload.restaurant_id,
-        restaurant_table_id=payload.restaurant_table_id,
-        party_size=payload.party_size,
-        starts_at=payload.starts_at,
-        ends_at=payload.ends_at,
-        status=ReservationStatus.CONFIRMED,
-    )
-    write_name(reservation, payload.guest_name)
-    session.add(reservation)
+    # Two concurrent INSERTs for overlapping windows can deadlock while the
+    # EXCLUDE constraint is checked: each finds the other's uncommitted row
+    # and waits for its transaction. PostgreSQL aborts one of them with
+    # 40P01. Unlike a unique index, an exclusion constraint has no
+    # speculative insertion to avoid this, so the aborted one is retried:
+    # by then the other has committed, and the retry gets the real answer -
+    # 409 if the window is taken, 201 if the winner rolled back.
+    # A rollback expires every object in the session, the caller included,
+    # so read user.id once, before any attempt.
+    user_id = user.id
+    for attempt in range(1, DEADLOCK_RETRIES + 1):
+        reservation = Reservation(
+            user_id=user_id,
+            restaurant_id=payload.restaurant_id,
+            restaurant_table_id=payload.restaurant_table_id,
+            party_size=payload.party_size,
+            starts_at=payload.starts_at,
+            ends_at=payload.ends_at,
+            status=ReservationStatus.CONFIRMED,
+        )
+        write_name(reservation, payload.guest_name)
+        session.add(reservation)
 
-    try:
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        if "no_double_booking" in str(exc.orig):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "That table is already booked for an overlapping time window",
-            ) from exc
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Reservation violates a constraint") from exc
+        try:
+            await session.commit()
+            break
+        except IntegrityError as exc:
+            await session.rollback()
+            if "no_double_booking" in str(exc.orig):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "That table is already booked for an overlapping time window",
+                ) from exc
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Reservation violates a constraint") from exc
+        except OperationalError as exc:
+            await session.rollback()
+            if getattr(exc.orig, "sqlstate", None) != DEADLOCK or attempt == DEADLOCK_RETRIES:
+                raise
+            log.info("booking deadlocked on table %s, retrying", payload.restaurant_table_id)
+            # Every loser of a race retries at once and could deadlock
+            # again; a few random milliseconds spread them out.
+            await asyncio.sleep(random.uniform(0, 0.01 * attempt))
 
     return await reload(session, reservation)
 
