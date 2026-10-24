@@ -146,7 +146,11 @@ class Steady:
         self.version: dict[int, int] = {}    # reservation id -> last version seen
         self.busy: set[int] = set()          # ids with a request in flight
         self.slot = 0
-        self.base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(days=300)
+        # A random start date, so a rerun never lands on the slots an earlier
+        # run left booked on the same table.
+        self.base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
+            days=random.randint(1_000, 20_000)
+        )
 
     async def call(self, method: str, path: str, **kw) -> httpx.Response | None:
         t0 = time.perf_counter()
