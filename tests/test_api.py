@@ -218,6 +218,30 @@ async def test_order_with_empty_items_rejected(client: AsyncClient, auth_headers
     assert r.status_code == 422
 
 
+# ------------------------------------------------ GET /restaurants/{id}
+
+
+async def test_restaurant_detail_selects_only_what_it_returns(client: AsyncClient):
+    """Projection: one SELECT naming the response columns, not owner_id."""
+    from sqlalchemy import event
+
+    from app.db import postgres
+
+    sent: list[str] = []
+    listen = lambda conn, cursor, statement, *a: sent.append(statement)  # noqa: E731
+    rid = (await client.get("/api/v1/restaurants?limit=1")).json()["items"][0]["id"]
+    event.listen(postgres.engine.sync_engine, "before_cursor_execute", listen)
+    try:
+        r = await client.get(f"/api/v1/restaurants/{rid}")
+    finally:
+        event.remove(postgres.engine.sync_engine, "before_cursor_execute", listen)
+
+    assert r.status_code == 200
+    assert set(r.json()) >= {"address", "created_at"}
+    (query,) = sent
+    assert "owner_id" not in query
+
+
 # ------------------------------------- POST /reservations - double booking
 
 

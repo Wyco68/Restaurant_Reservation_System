@@ -86,13 +86,25 @@ async def search_restaurants(
 
 
 @router.get("/{restaurant_id}", response_model=RestaurantOut)
-async def get_restaurant(restaurant_id: int, session: Session) -> Restaurant:
-    restaurant = await session.scalar(
-        select(Restaurant).where(Restaurant.id == restaurant_id)
-    )
-    if restaurant is None:
+async def get_restaurant(restaurant_id: int, session: Session) -> RestaurantOut:
+    """PROJECTION: exactly the RestaurantOut columns; owner_id stays on disk."""
+    row = (
+        await session.execute(
+            select(
+                Restaurant.id,
+                Restaurant.name,
+                Restaurant.cuisine,
+                Restaurant.city,
+                Restaurant.price_range,
+                Restaurant.avg_rating,
+                Restaurant.address,
+                Restaurant.created_at,
+            ).where(Restaurant.id == restaurant_id)
+        )
+    ).first()
+    if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Restaurant not found")
-    return restaurant
+    return RestaurantOut.model_validate(row, from_attributes=True)
 
 
 @router.get("/{restaurant_id}/availability", response_model=list[AvailabilitySlot])
