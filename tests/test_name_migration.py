@@ -102,7 +102,9 @@ async def test_dual_write_fills_both_on_update(
     body = await book(client, auth_headers, free_slot, created, "Grace Hopper")
 
     r = await client.patch(
-        f"/api/v1/reservations/{body['id']}", json={"guest_name": "Alan Turing"}, headers=auth_headers
+        f"/api/v1/reservations/{body['id']}",
+        json={"guest_name": "Alan Turing"},
+        headers={**auth_headers, "If-Match": f'"{body["version"]}"'},
     )
 
     assert r.status_code == 200

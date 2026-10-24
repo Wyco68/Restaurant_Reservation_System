@@ -7,6 +7,7 @@ Covers every core endpoint and the full status-code surface:
 from __future__ import annotations
 
 import asyncio
+import random
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -217,6 +218,30 @@ async def test_order_with_empty_items_rejected(client: AsyncClient, auth_headers
     assert r.status_code == 422
 
 
+# ------------------------------------------------ GET /restaurants/{id}
+
+
+async def test_restaurant_detail_selects_only_what_it_returns(client: AsyncClient):
+    """Projection: one SELECT naming the response columns, not owner_id."""
+    from sqlalchemy import event
+
+    from app.db import postgres
+
+    sent: list[str] = []
+    listen = lambda conn, cursor, statement, *a: sent.append(statement)  # noqa: E731
+    rid = (await client.get("/api/v1/restaurants?limit=1")).json()["items"][0]["id"]
+    event.listen(postgres.engine.sync_engine, "before_cursor_execute", listen)
+    try:
+        r = await client.get(f"/api/v1/restaurants/{rid}")
+    finally:
+        event.remove(postgres.engine.sync_engine, "before_cursor_execute", listen)
+
+    assert r.status_code == 200
+    assert set(r.json()) >= {"address", "created_at"}
+    (query,) = sent
+    assert "owner_id" not in query
+
+
 # ------------------------------------- POST /reservations - double booking
 
 
@@ -234,9 +259,11 @@ async def test_concurrent_booking_allows_exactly_one(
         pytest.skip("no seeded restaurants - run scripts/seed.py")
     restaurant_id = restaurants[0]["id"]
 
-    start = datetime.now(UTC).replace(
-        minute=0, second=0, microsecond=0
-    ) + timedelta(days=900)
+    # A random far-future hour: a fixed one runs out of free tables after a
+    # few reruns in the same hour.
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
+        days=random.randint(2_000, 9_000), hours=random.randint(0, 23)
+    )
 
     avail = await client.get(
         f"/api/v1/restaurants/{restaurant_id}/availability",
@@ -313,7 +340,9 @@ async def test_list_reservations_returns_only_own(
     if not restaurants:
         pytest.skip("no seeded restaurants - run scripts/seed.py")
     restaurant_id = restaurants[0]["id"]
-    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(days=902)
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
+        days=random.randint(2_000, 9_000), hours=random.randint(0, 23)
+    )
     end = start + timedelta(minutes=90)
     slots = [
         s
@@ -344,6 +373,61 @@ async def test_list_reservations_returns_only_own(
 
     listed = (await client.get("/api/v1/reservations", headers=auth_headers)).json()
     assert [b["id"] for b in listed] == [created.json()["id"]]
+    # Joined in the same query, so the client need not fetch the restaurant.
+    assert listed[0]["restaurant_name"] == restaurants[0]["name"]
+    assert listed[0]["version"] == created.json()["version"]
+
+
+async def test_reservation_read_carries_etag(client: AsyncClient, auth_headers: dict, free_slot):
+    restaurant_id, table_id, start = await free_slot()
+    created = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": restaurant_id,
+            "restaurant_table_id": table_id,
+            "guest_name": "Etag Check",
+            "party_size": 2,
+            "starts_at": start.isoformat(),
+            "ends_at": (start + timedelta(minutes=90)).isoformat(),
+        },
+        headers=auth_headers,
+    )
+    assert created.headers["ETag"] == f'"{created.json()["version"]}"'
+
+    r = await client.get(f"/api/v1/reservations/{created.json()['id']}", headers=auth_headers)
+    assert r.headers["ETag"] == created.headers["ETag"]
+
+
+async def test_availability_matches_the_constraint(client: AsyncClient, auth_headers: dict, free_slot):
+    """Back-to-back is free, any overlap is taken - the '[)' rule of the
+    EXCLUDE constraint, which the availability query now reuses."""
+    restaurant_id, table_id, start = await free_slot()
+    end = start + timedelta(minutes=90)
+    r = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": restaurant_id,
+            "restaurant_table_id": table_id,
+            "guest_name": "Edge Case",
+            "party_size": 2,
+            "starts_at": start.isoformat(),
+            "ends_at": end.isoformat(),
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 201
+
+    async def free(s: datetime, e: datetime) -> bool:
+        slots = (await client.get(
+            f"/api/v1/restaurants/{restaurant_id}/availability",
+            params={"starts_at": s.isoformat(), "ends_at": e.isoformat()},
+        )).json()
+        return next(x for x in slots if x["restaurant_table_id"] == table_id)["available"]
+
+    assert await free(end, end + timedelta(hours=1)) is True
+    assert await free(start - timedelta(hours=1), start) is True
+    assert await free(end - timedelta(minutes=1), end + timedelta(hours=1)) is False
+    assert await free(start + timedelta(minutes=10), start + timedelta(minutes=20)) is False
 
 
 # ------------------------------------------------- migration helper logic

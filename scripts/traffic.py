@@ -10,6 +10,10 @@ Two jobs:
               that returns 500. Pass criteria (CP2 §4, plus 4xx):
                   0 HTTP 5xx, 0 rejected requests, 0 connection errors,
                   0 missing or wrong names, p99 latency < 500 ms.
+              A PATCH sends If-Match with the last version it saw. A 412
+              or 409 means another writer (the backfill) changed the row;
+              the script re-reads and retries, as any client must, and
+              counts it as a conflict rather than a rejection.
 
   concurrent  Double-booking proof. Fires N simultaneous requests for the
               SAME table and time window. Exactly one must return 201;
@@ -96,6 +100,10 @@ class Stats:
     bad_fields: int = 0     # 2xx with a missing or wrong guest_name
     last_problem: str = ""
 
+    @property
+    def conflicts(self) -> int:
+        return sum(n for k, n in self.codes.items() if k in ("PATCH 409", "PATCH 412"))
+
     def record(self, method: str, status: int, ms: float) -> None:
         self.codes[f"{method} {status}"] += 1
         self.latencies_ms.append(ms)
@@ -112,7 +120,9 @@ class Stats:
     def rejected(self) -> int:
         # Every steady-mode request is valid and every slot distinct, so any
         # 4xx is a fault too - e.g. a NOT NULL violation surfaces as 400.
-        return sum(n for k, n in self.codes.items() if k.split()[1].startswith("4"))
+        # Except a PATCH version conflict, which is retried.
+        fourxx = sum(n for k, n in self.codes.items() if k.split()[1].startswith("4"))
+        return fourxx - self.conflicts
 
     def p(self, q: float) -> float:
         if len(self.latencies_ms) < 2:
@@ -133,20 +143,26 @@ class Steady:
         self.restaurant_id, self.table_id = restaurant_id, table_id
         self.stats = Stats()
         self.expected: dict[int, str] = {}   # reservation id -> name it must have
+        self.version: dict[int, int] = {}    # reservation id -> last version seen
         self.busy: set[int] = set()          # ids with a request in flight
         self.slot = 0
-        self.base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(days=300)
+        # A random start date, so a rerun never lands on the slots an earlier
+        # run left booked on the same table.
+        self.base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
+            days=random.randint(1_000, 20_000)
+        )
 
     async def call(self, method: str, path: str, **kw) -> httpx.Response | None:
         t0 = time.perf_counter()
         try:
-            r = await self.client.request(method, f"{BASE_URL}{path}", headers=self.headers, **kw)
+            kw.setdefault("headers", self.headers)
+            r = await self.client.request(method, f"{BASE_URL}{path}", **kw)
         except httpx.HTTPError as exc:
             self.stats.errors += 1
             self.stats.last_problem = f"{method} {path}: {type(exc).__name__}"
             return None
         self.stats.record(method, r.status_code, (time.perf_counter() - t0) * 1000)
-        if r.status_code >= 400:
+        if r.status_code >= 400 and f"{method} {r.status_code}" not in ("PATCH 409", "PATCH 412"):
             self.stats.last_problem = f"{method} {path}: {r.status_code} {r.text[:120]}"
         return r
 
@@ -169,18 +185,28 @@ class Steady:
         if r is not None and r.status_code == 201:
             self.check_name(r, name)
             self.expected[r.json()["id"]] = name
+            self.version[r.json()["id"]] = r.json()["version"]
 
     async def read(self, rid: int) -> None:
         r = await self.call("GET", f"/api/v1/reservations/{rid}")
         if r is not None and r.status_code == 200:
             self.check_name(r, self.expected[rid])
+            self.version[rid] = r.json()["version"]
 
     async def rename(self, rid: int) -> None:
         name = random.choice(NAMES)
-        r = await self.call("PATCH", f"/api/v1/reservations/{rid}", json={"guest_name": name})
+        for _ in range(3):
+            r = await self.call(
+                "PATCH", f"/api/v1/reservations/{rid}", json={"guest_name": name},
+                headers={**self.headers, "If-Match": f'"{self.version[rid]}"'},
+            )
+            if r is None or r.status_code not in (409, 412):
+                break
+            await self.read(rid)          # someone else wrote it: re-read, retry
         if r is not None and r.status_code == 200:
             self.check_name(r, name)
             self.expected[rid] = name
+            self.version[rid] = r.json()["version"]
 
     async def one(self) -> None:
         idle = [rid for rid in self.expected if rid not in self.busy]
@@ -201,7 +227,7 @@ class Steady:
         s = self.stats
         return (f"\r  {elapsed:6.0f}s  {s.total / max(elapsed, 1e-9):5.1f} req/s  "
                 f"5xx {s.server_errors}  4xx {s.rejected}  conn-err {s.errors}  "
-                f"bad-name {s.bad_fields}  "
+                f"bad-name {s.bad_fields}  conflicts {s.conflicts}  "
                 f"p99 {s.p(99):6.1f} ms   ")
 
     async def run(self, rps: int, duration: float | None) -> Stats:
