@@ -7,11 +7,11 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, exists, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import get_session
-from app.models.reservation import Reservation, ReservationStatus
+from app.models.reservation import Reservation
 from app.models.restaurant import Restaurant, RestaurantTable
 from app.models.user import UserRole
 from app.schemas.common import Page
@@ -125,45 +125,38 @@ async def check_availability(
     if ends_at <= starts_at:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ends_at must be after starts_at")
 
-    tables = (
-        await session.scalars(
-            select(RestaurantTable).where(
-                RestaurantTable.restaurant_id == restaurant_id,
-                RestaurantTable.is_active.is_(True),
-                RestaurantTable.capacity >= party_size,
-            )
-        )
-    ).all()
-
-    if not tables:
-        return []
-
-    # One query for all conflicts rather than one per table - avoiding the
-    # N+1 pattern.
-    busy = set(
-        (
-            await session.scalars(
-                select(Reservation.restaurant_table_id).where(
-                    Reservation.restaurant_table_id.in_([t.id for t in tables]),
-                    Reservation.status != ReservationStatus.CANCELLED,
-                    # Overlap test, mirroring the tstzrange '[)' semantics of
-                    # the EXCLUDE constraint: touching endpoints do not clash.
-                    Reservation.starts_at < ends_at,
-                    Reservation.ends_at > starts_at,
-                )
-            )
-        ).all()
+    # ONE query for every table and its status - no per-table lookup (N+1).
+    #
+    # The probe is written exactly as the EXCLUDE constraint is - same range
+    # expression, same '[)' bounds, same WHERE - so PostgreSQL answers it
+    # from the constraint's own GiST index (no_double_booking). The status
+    # is a fixed literal, not a parameter: with a parameter the planner
+    # cannot prove the partial index applies and falls back to scanning
+    # every reservation. starts_at < x AND ends_at > y means the same thing
+    # but no index serves it. See docs/PERFORMANCE.md for both plans.
+    bounds = literal_column("'[)'")
+    taken = exists().where(
+        Reservation.restaurant_table_id == RestaurantTable.id,
+        Reservation.status.op("<>")(literal_column("'cancelled'")),
+        func.tstzrange(Reservation.starts_at, Reservation.ends_at, bounds).op("&&")(
+            func.tstzrange(starts_at, ends_at, bounds)
+        ),
     )
-
-    return [
-        AvailabilitySlot(
-            restaurant_table_id=t.id,
-            table_number=t.table_number,
-            capacity=t.capacity,
-            available=t.id not in busy,
+    rows = await session.execute(
+        select(
+            RestaurantTable.id.label("restaurant_table_id"),
+            RestaurantTable.table_number,
+            RestaurantTable.capacity,
+            (~taken).label("available"),
         )
-        for t in tables
-    ]
+        .where(
+            RestaurantTable.restaurant_id == restaurant_id,
+            RestaurantTable.is_active.is_(True),
+            RestaurantTable.capacity >= party_size,
+        )
+        .order_by(RestaurantTable.id)
+    )
+    return [AvailabilitySlot.model_validate(r, from_attributes=True) for r in rows]
 
 
 @router.post(

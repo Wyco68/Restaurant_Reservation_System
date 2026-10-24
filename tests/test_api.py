@@ -398,6 +398,38 @@ async def test_reservation_read_carries_etag(client: AsyncClient, auth_headers: 
     assert r.headers["ETag"] == created.headers["ETag"]
 
 
+async def test_availability_matches_the_constraint(client: AsyncClient, auth_headers: dict, free_slot):
+    """Back-to-back is free, any overlap is taken - the '[)' rule of the
+    EXCLUDE constraint, which the availability query now reuses."""
+    restaurant_id, table_id, start = await free_slot()
+    end = start + timedelta(minutes=90)
+    r = await client.post(
+        "/api/v1/reservations",
+        json={
+            "restaurant_id": restaurant_id,
+            "restaurant_table_id": table_id,
+            "guest_name": "Edge Case",
+            "party_size": 2,
+            "starts_at": start.isoformat(),
+            "ends_at": end.isoformat(),
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 201
+
+    async def free(s: datetime, e: datetime) -> bool:
+        slots = (await client.get(
+            f"/api/v1/restaurants/{restaurant_id}/availability",
+            params={"starts_at": s.isoformat(), "ends_at": e.isoformat()},
+        )).json()
+        return next(x for x in slots if x["restaurant_table_id"] == table_id)["available"]
+
+    assert await free(end, end + timedelta(hours=1)) is True
+    assert await free(start - timedelta(hours=1), start) is True
+    assert await free(end - timedelta(minutes=1), end + timedelta(hours=1)) is False
+    assert await free(start + timedelta(minutes=10), start + timedelta(minutes=20)) is False
+
+
 # ------------------------------------------------- migration helper logic
 
 
