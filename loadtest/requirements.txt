@@ -1,0 +1,3 @@
+# Load test tooling only - the API does not need these.
+locust==2.32.4
+matplotlib==3.9.3
