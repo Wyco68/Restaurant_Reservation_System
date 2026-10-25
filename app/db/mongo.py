@@ -69,7 +69,13 @@ async def ensure_indexes() -> None:
     being scattered through the query code.
     """
     await products().create_index([("restaurant_id", 1), ("category", 1)])
-    await products().create_index([("restaurant_id", 1), ("is_available", 1)])
+    # Equality fields first, then the sort field (ESR). GET /products filters
+    # on restaurant_id and is_available and sorts by name; with name in the
+    # index the documents come back already ordered - no in-memory SORT.
+    await products().create_index([("restaurant_id", 1), ("is_available", 1), ("name", 1)])
+    # The catalogue without a restaurant filter: was a COLLSCAN of every
+    # product plus a SORT, now reads only the page it returns.
+    await products().create_index([("is_available", 1), ("name", 1)])
     await products().create_index([("name", "text")])
     await products().create_index([("price", 1)])
     await products().create_index([("attributes.dietary", 1)], sparse=True)
