@@ -1,7 +1,7 @@
 import { computed } from "vue";
 
-/* Inline SVG (Lucide-style geometry). Never emoji-as-icon: emoji render
-   differently per platform and screen readers announce them as words. */
+/* Inline SVG icons (Lucide style). We do not use emoji, because they look
+   different on each platform and screen readers read them out. */
 const PATHS = {
   utensils: '<path d="M3 2v7a3 3 0 0 0 3 3v10"/><path d="M6 2v6"/><path d="M9 2v6"/><path d="M17 2c-1.7 1.4-2.5 4-2.5 7 0 2 .5 3 2.5 3v10"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',

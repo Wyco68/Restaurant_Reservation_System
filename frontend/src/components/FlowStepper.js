@@ -1,7 +1,6 @@
 import BaseIcon from "./BaseIcon.js";
 
-/* Funnel progress. The rule for a multi-step flow is simple: always say
-   which step this is and how many remain. */
+/* Shows which booking step the user is on and how many are left. */
 const steps = ["Choose a restaurant", "Reserve", "Confirmed"];
 
 export default {

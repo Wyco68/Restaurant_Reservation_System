@@ -1,16 +1,13 @@
 """Load test (CP3 §2.3): 50 customers browse, book, edit and order for 3 minutes.
 
     pip install -r loadtest/requirements.txt
-    locust -f loadtest/locustfile.py --headless -u 50 -r 10 -t 3m \
-        --host http://localhost:8000 --csv loadtest/results/run
+    locust -f loadtest/locustfile.py --headless -u 50 -r 10 -t 3m --host http://localhost:8000 --csv loadtest/results/run
 
-Exits 1 if a CP3 target is missed: p95 >= 200 ms, p99 >= 500 ms, or 1% or
-more of requests failed.
+Exits with code 1 if a target is missed: p95 >= 200 ms, p99 >= 500 ms, or
+1% or more failed requests.
 
-Every virtual user signs in as a different seeded customer and only edits
-its own bookings, at dates no other user picks. So a 409 or 412 here is a
-real fault, never a collision the test arranged - every non-2xx counts as
-an error.
+Each user logs in as a different customer and only edits its own bookings,
+on dates no other user uses. So any 409 or 412 counts as an error.
 """
 
 from __future__ import annotations
@@ -21,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 from locust import HttpUser, between, events, task
 
-PASSWORD = "TableFlow123!"   # seed-script demo password, not a secret
+PASSWORD = "TableFlow123!"   # demo password from scripts/seed.py
 CUSTOMERS = itertools.count(45)   # user0000-0044 are admin and staff
 CITIES = ["Chiang Mai", "Bangkok", "Phuket", "Khon Kaen", "Hat Yai"]
 
@@ -43,12 +40,12 @@ class Customer(HttpUser):
         ]
         self.menus: dict[int, list[str]] = {}
         self.bookings: dict[int, int] = {}   # reservation id -> version
-        # Far-future dates of this user's own: no two users share a window.
+        # Each user books its own far-future dates, so users never compete.
         self.next_slot = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
             days=random.randint(2_000, 40_000)
         )
 
-    # ---------------------------------------------------------- browsing
+    # Browsing
 
     @task(4)
     def search(self) -> None:
@@ -90,7 +87,7 @@ class Customer(HttpUser):
             name="/api/v1/restaurants/{id}/availability",
         ).json()
 
-    # ---------------------------------------------------------- bookings
+    # Bookings
 
     @task(2)
     def book(self) -> None:
@@ -143,7 +140,7 @@ class Customer(HttpUser):
             name="/api/v1/reservations/{id}",
         )
 
-    # ------------------------------------------------------------ orders
+    # Orders
 
     @task(1)
     def place_order(self) -> None:

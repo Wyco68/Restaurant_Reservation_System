@@ -1,9 +1,9 @@
-"""Charts and a per-endpoint table from a Locust --csv run.
+"""Charts and an endpoint table from a Locust --csv run.
 
     python loadtest/charts.py loadtest/results/run docs/perf
 
-Writes throughput.png and latency.png into the output directory and prints
-the per-endpoint table as Markdown.
+Saves throughput.png and latency.png in the output folder and prints the
+endpoint table in Markdown.
 """
 
 from __future__ import annotations

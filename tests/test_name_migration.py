@@ -1,9 +1,9 @@
-"""The API side of the guest_name migration: dual-write and switch-read.
+"""The API side of the guest_name migration: dual write and switch read.
 
-Each test puts the app in one phase and checks the columns in the database
-directly - the API response alone cannot show which column a value came
-from. Tests skip when the live schema cannot serve the phase (for example
-legacy after 0004 has dropped guest_name).
+Each test sets a phase and checks the columns in the database directly,
+because the API response does not show which column a name came from.
+Tests are skipped when the schema does not fit the phase (for example
+legacy after 0004).
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ async def test_dual_write_fills_both_on_update(
 async def test_switch_read_ignores_guest_name(
     client: AsyncClient, auth_headers: dict, free_slot, created, db
 ):
-    """Corrupt guest_name behind the API's back: read_new must not notice."""
+    """Change guest_name directly in the database: read_new must not see it."""
     require(db, "guest_name", "first_name")
     migration.set_phase(Phase.DUAL_WRITE)
     body = await book(client, auth_headers, free_slot, created, "Barbara Liskov")

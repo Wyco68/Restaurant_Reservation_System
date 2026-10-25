@@ -1,4 +1,4 @@
-"""Shared response envelopes."""
+"""Response shapes shared by several endpoints."""
 
 from typing import Generic, TypeVar
 
@@ -8,10 +8,7 @@ T = TypeVar("T")
 
 
 class Page(BaseModel, Generic[T]):
-    """Standard pagination envelope.
-
-    Used by every list endpoint so clients learn one shape, not five.
-    """
+    """Pagination format used by every paged list endpoint."""
 
     items: list[T]
     page: int = Field(ge=1)
@@ -21,6 +18,6 @@ class Page(BaseModel, Generic[T]):
 
 
 class ErrorResponse(BaseModel):
-    """Standard error body. FastAPI's default {"detail": ...} shape, documented."""
+    """Error body, the same {"detail": ...} format FastAPI uses."""
 
     detail: str

@@ -1,8 +1,7 @@
 """Product schemas (MongoDB).
 
-The `attributes` field is typed as an open dict on purpose: constraining its
-keys would recreate the relational rigidity the document store exists to
-avoid.
+attributes is an open dict, because products of different categories
+have different attributes.
 """
 
 from __future__ import annotations
@@ -24,9 +23,8 @@ class ProductCreate(BaseModel):
     price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
     currency: str = Field(default="THB", min_length=3, max_length=3)
     is_available: bool = True
-    # Arbitrary nested keys accepted. Validated as "an object" and no more.
-    # Never used for pricing or authorization - only top-level `price` is
-    # authoritative.
+    # Any keys are allowed. They are never used for pricing or permissions;
+    # only the top-level price is.
     attributes: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -47,11 +45,10 @@ class ProductOut(BaseModel):
 
 
 class ProductSummary(BaseModel):
-    """Projection for list views.
+    """Product fields for list views.
 
-    GET /products returns this, not ProductOut. The Mongo query uses an
-    explicit projection so `description` and `attributes` are never pulled
-    off disk for a list request.
+    GET /products returns this instead of ProductOut, and the MongoDB query
+    only reads these fields.
     """
 
     model_config = ConfigDict(populate_by_name=True)

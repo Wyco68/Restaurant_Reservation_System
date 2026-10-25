@@ -1,9 +1,9 @@
-"""TableFlow API - FastAPI application entry point.
+"""TableFlow API, the FastAPI app.
 
 Run:
     uvicorn app.main:app --reload
 
-Interactive docs:
+API docs:
     http://localhost:8000/docs
 """
 
@@ -26,18 +26,16 @@ log = logging.getLogger("tableflow")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Indexes are created on startup so a fresh clone is correctly indexed
-    # without a manual step. create_index is idempotent.
+    # Create the MongoDB indexes on startup. Running it again is harmless.
     try:
         await mongo.ensure_indexes()
     except Exception:  # noqa: BLE001
-        # Do not block startup on Mongo - /health reports the real state and
-        # a dead Mongo should be visible there, not as an opaque crash loop.
+        # Start anyway if MongoDB is down; /health will show it.
         log.warning("could not create MongoDB indexes at startup", exc_info=True)
     try:
         await migration.reconcile_with_schema(postgres.engine)
     except Exception:  # noqa: BLE001
-        # Same reasoning: an unreachable PostgreSQL shows up in /health.
+        # Same for PostgreSQL.
         log.warning("could not check the schema against the migration phase", exc_info=True)
     log.info("name migration phase: %s", migration.current().value)
     yield
@@ -56,8 +54,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Vanilla-JS frontend is served from a different origin during development.
-# Tighten this before anything reachable from a network.
+# The frontend runs on another port in development. Restrict this before
+# putting the app on a network.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5500", "http://127.0.0.1:5500"],
@@ -77,11 +75,10 @@ app.include_router(admin.router)
 
 @app.get("/health", tags=["meta"])
 async def health() -> dict:
-    """Liveness + dependency check.
+    """Health check for both databases.
 
-    Actually round-trips a query against each engine rather than reporting
-    whether a client object exists. Returns 200 with per-engine booleans so
-    a partial outage is visible instead of being flattened into one flag.
+    Runs a real query on each one and returns true or false for each, so you
+    can see which one is down.
     """
     pg_ok = await postgres.ping()
     mongo_ok = await mongo.ping()

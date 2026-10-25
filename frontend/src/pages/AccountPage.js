@@ -28,12 +28,12 @@ export default {
     async function load() {
       state.value = "loading";
       try {
-        // Latest first, cancelled included, restaurant name joined in by
-        // the API - one request for the whole list.
+        // Newest first, cancelled included. The API adds the restaurant
+        // name, so one request is enough for the whole list.
         bookings.value = await api("/api/v1/reservations");
         state.value = "ready";
       } catch (e) {
-        // 404/405: the API running here has no list endpoint yet.
+        // 404/405: this API version has no list endpoint yet.
         state.value = e.status === 404 || e.status === 405 ? "unavailable" : "error";
         error.value = e.message;
       }
@@ -47,12 +47,12 @@ export default {
           method: "DELETE",
           headers: { "If-Match": `"${b.version}"` },
         });
-        // The cancel response is a single reservation, without the joined name.
+        // The cancel response has no restaurant name, so keep the old one.
         bookings.value = bookings.value.map((x) =>
           x.id === b.id ? { ...updated, restaurant_name: x.restaurant_name } : x);
       } catch (e) {
-        // 412/409: the booking changed since this page loaded. Show the
-        // current state instead of acting on a stale one.
+        // 412/409: the booking changed after the page loaded, so reload the
+        // list and show its current state.
         if (e.status === 412 || e.status === 409) await load();
         error.value = e.status === 412 || e.status === 409
           ? "This booking changed since the page loaded. Here is its current state."

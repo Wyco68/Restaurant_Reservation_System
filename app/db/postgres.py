@@ -1,9 +1,7 @@
-"""PostgreSQL connection setup (async SQLAlchemy 2.x).
+"""PostgreSQL connection (async SQLAlchemy 2.x).
 
-All access goes through the ORM / Core. Raw SQL string concatenation is
-banned here because it is an SQL injection vector. Where literal SQL is
-unavoidable (extensions, the EXCLUDE constraint) it is a fixed statement in
-a migration with no interpolated user input.
+All queries go through SQLAlchemy with parameters. Plain SQL strings are
+only used in migrations, and never contain user input.
 """
 
 from collections.abc import AsyncGenerator
@@ -29,10 +27,10 @@ SessionLocal = async_sessionmaker(
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency. One session per request.
+    """FastAPI dependency: one session per request.
 
-    The session is rolled back and closed automatically. Endpoints commit
-    explicitly so the transaction boundary is visible in the code.
+    Endpoints call commit themselves. On an error the session is rolled
+    back.
     """
     async with SessionLocal() as session:
         try:
@@ -43,7 +41,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def ping() -> bool:
-    """Health check: can we actually round-trip a query?"""
+    """Health check: run SELECT 1."""
     from sqlalchemy import text
 
     try:

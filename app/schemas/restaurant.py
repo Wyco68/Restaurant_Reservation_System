@@ -17,7 +17,7 @@ class RestaurantCreate(BaseModel):
 
 
 class RestaurantSummary(BaseModel):
-    """Projection for search results - no address, no owner graph loaded."""
+    """Fields for search results (no address or owner)."""
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -1,43 +1,22 @@
-"""Reservation logic: double-booking prevention and the name migration.
+"""Reservation logic: booking, editing, cancelling and the name migration.
 
-NAME MIGRATION
---------------
-Which name columns are written and read depends on the phase in
-app/migration.py. Every write sets exactly `migration.write_columns()` and
-every read loads exactly `migration.read_columns()`, so the same code serves
-the schema before Expand, between the steps, and after Contract.
+Name migration: the columns written and read depend on the phase in
+app/migration.py. Writes set migration.write_columns() and reads load
+migration.read_columns(), so the same code works on every schema version.
 
-CONCURRENCY DESIGN
-------------------
-Double-booking is prevented by a PostgreSQL EXCLUDE constraint, not by
-application code:
+Double booking is stopped by the no_double_booking EXCLUDE constraint in
+the database. When two bookings overlap, one insert succeeds and the other
+gets an IntegrityError, which we return as 409.
 
-    EXCLUDE USING gist (
-        restaurant_table_id WITH =,
-        tstzrange(starts_at, ends_at, '[)') WITH &&
-    ) WHERE (status <> 'cancelled')
+Edits use optimistic locking. Every response has the row's version (xmin)
+and PATCH must send it back in If-Match:
 
-Under concurrent inserts for the same table and overlapping window, exactly
-one transaction commits and the rest raise IntegrityError, which this module
-translates to 409 Conflict.
+    no If-Match                 -> 428
+    If-Match is an old version  -> 412
+    row changed during request  -> 409
 
-Why this and not SELECT ... FOR UPDATE: with a row lock, correctness lives
-in application code, and any future code path that forgets to take the lock
-silently reintroduces the bug. With the constraint, overlap is structurally
-impossible regardless of how many code paths write reservations. See
-docs/DESIGN.md for the full comparison.
-
-Edits are protected by optimistic concurrency (OCC). Every response carries
-the row's version (PostgreSQL's xmin, see the model). A PATCH must send it
-back in If-Match:
-
-    no If-Match                       -> 428, the client must say what it saw
-    If-Match is not the stored version -> 412, someone changed it since
-    changed between our read and write -> 409, a concurrent request won
-
-Either way the client re-reads and retries; nothing is silently overwritten.
-A lock cannot do this job: the read happened in the client's browser,
-minutes and several HTTP requests before the write.
+After 412 or 409 the client should read the reservation again and retry.
+See docs/DESIGN.md for why we chose these.
 """
 
 from __future__ import annotations
@@ -68,12 +47,11 @@ log = logging.getLogger(__name__)
 
 
 def split_guest_name(full: str) -> tuple[str, str]:
-    """Split a legacy guest_name into first / last.
+    """Split guest_name into first and last name at the first space.
 
-    Splits on the FIRST space only: "Mary Jane Watson" -> ("Mary", "Jane Watson").
-    A single-token name gets an empty last name rather than being dropped.
-    Used by both the dual-write path and scripts/backfill_names.py, so the
-    two can never disagree.
+    "Mary Jane Watson" gives ("Mary", "Jane Watson") and "Prince" gives
+    ("Prince", ""). The backfill script imports this function too, so both
+    split names the same way.
     """
     cleaned = " ".join(full.strip().split())
     if not cleaned:
@@ -83,11 +61,10 @@ def split_guest_name(full: str) -> tuple[str, str]:
 
 
 def select_reservations() -> Select[tuple[Reservation]]:
-    """SELECT for whole reservations, loading only the phase's name columns.
+    """SELECT reservations, loading only the name columns the phase reads.
 
-    The name columns are deferred on the model, so a plain select(Reservation)
-    never names a column that may not exist yet (before Expand) or any more
-    (after Contract). Every reservation query starts here.
+    All reservation queries start here, so they never ask for a name column
+    that the current schema does not have.
     """
     return select(Reservation).options(
         *(undefer(getattr(Reservation, c)) for c in migration.read_columns())
@@ -95,12 +72,10 @@ def select_reservations() -> Select[tuple[Reservation]]:
 
 
 def select_my_bookings(user_id, limit: int) -> Select:
-    """PROJECTION for the "my bookings" list: one query, named columns only.
+    """Query for the "my bookings" list: one query, only the needed columns.
 
-    The restaurant name comes from a JOIN. Without it the client fetches
-    GET /restaurants/{id} once per distinct restaurant - an N+1 over HTTP.
-    Columns rather than entities: a list is read-only, so nothing needs the
-    ORM's identity map or change tracking.
+    The restaurant name is joined in, so the frontend does not have to call
+    GET /restaurants/{id} for every booking.
     """
     return (
         select(
@@ -125,7 +100,7 @@ def select_my_bookings(user_id, limit: int) -> Select:
 
 
 def write_name(r: Reservation, guest_name: str) -> None:
-    """THE DUAL-WRITE POINT: set exactly the phase's name columns."""
+    """Set the name columns that the current phase writes (dual write)."""
     first, last = split_guest_name(guest_name)
     values = {"guest_name": guest_name, "first_name": first, "last_name": last}
     for column in migration.write_columns():
@@ -133,7 +108,7 @@ def write_name(r: Reservation, guest_name: str) -> None:
 
 
 async def reload(session: AsyncSession, r: Reservation) -> Reservation:
-    """Re-read after a commit: server defaults plus the phase's name columns."""
+    """Read the reservation again after a commit."""
     return await session.scalar(
         select_reservations()
         .where(Reservation.id == r.id)
@@ -142,12 +117,11 @@ async def reload(session: AsyncSession, r: Reservation) -> Reservation:
 
 
 def _fields(r: Any) -> dict[str, Any]:
-    """Response fields from a Reservation or a projected row - same names.
+    """Build the response fields from a Reservation or a list row.
 
-    THIS IS THE SWITCH-READ POINT. Before read_new the name comes from
-    guest_name; from read_new on it comes from first_name / last_name only -
-    guest_name is not even loaded. The response shape never changes, so
-    clients cannot tell which column served them.
+    This is where the read switches: before read_new the name comes from
+    guest_name, after that from first_name and last_name. The response looks
+    the same either way.
     """
     if "guest_name" in migration.read_columns():
         guest_name = r.guest_name
@@ -182,10 +156,9 @@ def etag(r: Reservation) -> str:
 
 
 def check_if_match(r: Reservation, if_match: str | None, *, required: bool) -> None:
-    """Compare the client's If-Match with the version just read.
+    """Check the client's If-Match against the current version.
 
-    Accepts the forms RFC 9110 allows: "123", W/"123", a comma-separated
-    list, or * (any version).
+    Accepts "123", W/"123", a comma-separated list, or * for any version.
     """
     if if_match is None:
         if required:
@@ -203,12 +176,10 @@ def check_if_match(r: Reservation, if_match: str | None, *, required: bool) -> N
 
 
 async def _commit_versioned(session: AsyncSession) -> None:
-    """Commit an UPDATE guarded by the version check.
+    """Commit an update that is checked against the version.
 
-    StaleDataError means the UPDATE matched 0 rows: between this request's
-    read and its write, another transaction committed a change, so xmin no
-    longer equals what was read. Under READ COMMITTED the loser waits on the
-    winner's row lock, then re-checks the WHERE against the new row version.
+    StaleDataError means another request changed the row after we read it,
+    so the UPDATE matched no rows. We return 409.
     """
     try:
         await session.commit()
@@ -225,19 +196,13 @@ async def create_reservation(
 ) -> Reservation:
     """Create a reservation, or raise 409 if the slot is taken.
 
-    Pre-flight checks below produce friendly 400/404 responses for the
-    common cases. They are NOT the double-booking defence - the constraint
-    is. Removing them would degrade the error messages, not the correctness.
+    The checks below only give clearer 400/404 messages. The EXCLUDE
+    constraint is what stops double booking.
     """
-    # FOR NO KEY UPDATE on the table's row, held until commit: bookings for
-    # the same table queue here instead of inserting side by side. Without
-    # it, two INSERTs for overlapping windows can deadlock while PostgreSQL
-    # checks the EXCLUDE constraint - each finds the other's uncommitted row
-    # and waits for its transaction - and one fails with 40P01 (a 500).
-    # Queued, the second INSERT sees the first one committed and gets a
-    # clean 409. The constraint still decides who gets the slot; the lock
-    # only orders the contenders. Bookings for other tables never wait, and
-    # NO KEY leaves foreign-key checks against the row unblocked.
+    # Lock the table's row until commit so bookings for the same table wait
+    # for each other. Without it, two overlapping inserts can deadlock while
+    # PostgreSQL checks the constraint, and one of them fails with a 500.
+    # NO KEY UPDATE still lets foreign key checks on the row go through.
     table = await session.scalar(
         select(RestaurantTable)
         .where(RestaurantTable.id == payload.restaurant_table_id)
@@ -284,10 +249,10 @@ async def create_reservation(
 async def update_reservation(
     session: AsyncSession, reservation: Reservation, payload: ReservationUpdate
 ) -> Reservation:
-    """Apply a partial update. A new guest_name is dual-written like a create.
+    """Apply a partial update. A new guest_name is written like on create.
 
-    The caller has already checked If-Match; the version check in the UPDATE
-    catches a writer that slipped in after that.
+    The router has already checked If-Match. The version check in the UPDATE
+    catches a change made after that.
     """
     if payload.guest_name is not None:
         write_name(reservation, payload.guest_name)
@@ -303,11 +268,10 @@ async def update_reservation(
 async def cancel_reservation(
     session: AsyncSession, reservation: Reservation
 ) -> Reservation:
-    """Cancel a reservation, freeing the slot.
+    """Cancel a reservation and free the slot.
 
-    The EXCLUDE constraint's WHERE clause excludes cancelled rows, so this
-    single status change is what makes the time window bookable again. No
-    row is deleted - cancellation history is retained.
+    The EXCLUDE constraint ignores cancelled rows, so changing the status is
+    enough. The row is kept for history.
     """
     reservation.status = ReservationStatus.CANCELLED
     await _commit_versioned(session)

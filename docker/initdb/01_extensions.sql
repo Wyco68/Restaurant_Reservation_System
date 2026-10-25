@@ -1,16 +1,14 @@
--- Initial DDL setup script.
--- Runs once, automatically, the first time the postgres_data volume is created.
--- Alembic owns the tables; this file owns only what Alembic cannot create
--- for itself, because extensions require privileges the migration may not have.
+-- Database setup script.
+-- Runs once, the first time the postgres_data volume is created.
+-- Alembic creates the tables. This file only creates the extensions, which
+-- need more privileges than the migration user may have.
 
--- Case-insensitive text, used for users.email so that Bob@x.com and bob@x.com
--- cannot both register.
+-- Case-insensitive text for users.email, so Bob@x.com and bob@x.com are the
+-- same account.
 CREATE EXTENSION IF NOT EXISTS citext;
 
--- Required by the reservations EXCLUDE constraint. btree_gist lets a GiST index
--- mix an equality operator (restaurant_table_id WITH =) with a range overlap
--- operator (tstzrange WITH &&) in one constraint. Without it, the
--- no_double_booking constraint cannot be created.
+-- Needed for the no_double_booking constraint, which uses = on
+-- restaurant_table_id and && on the time range in one GiST index.
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 -- gen_random_uuid() for users.id.

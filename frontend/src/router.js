@@ -1,8 +1,7 @@
 import { createRouter, createWebHashHistory } from "vue-router";
 import { session } from "./api.js";
 
-// Every page is lazy-loaded: the browser fetches a route's module the first
-// time it is visited, not on initial load.
+// Pages are loaded the first time they are visited.
 const routes = [
   { path: "/", component: () => import("./pages/HomePage.js"), meta: { title: "TableFlow" } },
   { path: "/restaurants", component: () => import("./pages/RestaurantList.js"), meta: { title: "Restaurants — TableFlow" } },
@@ -15,16 +14,14 @@ const routes = [
 ];
 
 const router = createRouter({
-  // Hash history needs no server rewrite rule, so the client works behind
-  // any static host without extra configuration.
+  // Hash URLs work on any static file server without extra setup.
   history: createWebHashHistory(),
   routes,
   scrollBehavior: (to, from, saved) => saved || { top: 0 },
 });
 
 router.beforeEach((to) => {
-  // Remember where the user was heading so the funnel resumes after sign-in
-  // instead of restarting.
+  // Remember where the user was going, so they continue there after signing in.
   if (to.meta.requiresAuth && !session.user) {
     return { path: "/signin", query: { redirect: to.fullPath } };
   }

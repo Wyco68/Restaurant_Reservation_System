@@ -1,5 +1,4 @@
-"""Reservations router - double-booking prevention (409 Conflict) and
-optimistic concurrency on edits (If-Match / ETag)."""
+"""Reservations: booking (409 on overlap) and editing with If-Match / ETag."""
 
 from __future__ import annotations
 
@@ -55,9 +54,8 @@ async def create_reservation(
 ) -> ReservationOut:
     """Book a table.
 
-    Concurrent requests for the same table and overlapping window: exactly
-    one receives 201, every other receives 409. Enforced by the database
-    EXCLUDE constraint, not by application-level checking.
+    If several requests book the same table for overlapping times, one
+    gets 201 and the others get 409. The database constraint decides.
     """
     reservation = await svc.create_reservation(session, current, payload)
     response.headers["ETag"] = svc.etag(reservation)
@@ -74,11 +72,10 @@ async def list_my_reservations(
     current: CurrentUser,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[ReservationListItem]:
-    """The signed-in user's own reservations, latest first, cancelled included.
+    """The signed-in user's reservations, newest first, cancelled included.
 
-    Always scoped to the caller - staff read other users' bookings one at a
-    time through GET /{id}, never as a bulk list. One SQL query whatever the
-    number of bookings: see svc.select_my_bookings.
+    Staff can read other users' bookings one by one with GET /{id}, but
+    never as a list. This is one SQL query (svc.select_my_bookings).
     """
     rows = await session.execute(svc.select_my_bookings(current.id, limit))
     return [svc.to_list_item(row) for row in rows]
@@ -110,10 +107,10 @@ async def update_reservation(
     response: Response,
     if_match: IfMatch = None,
 ) -> ReservationOut:
-    """Partial update, optimistic concurrency.
+    """Partial update with optimistic locking.
 
-    If-Match is required: a client may only change the version it has seen.
-    A new guest_name is dual-written, same as on create.
+    If-Match is required, so the client can only change the version it has
+    seen. A new guest_name is written the same way as on create.
     """
     reservation = await _load_owned(reservation_id, session, current)
     svc.check_if_match(reservation, if_match, required=True)
@@ -139,10 +136,9 @@ async def cancel_reservation(
 ) -> ReservationOut:
     """Cancel a reservation.
 
-    Sets status to 'cancelled' rather than deleting the row. The EXCLUDE
-    constraint ignores cancelled rows, so this frees the slot while
-    retaining the history. If-Match is optional here: cancelling does not
-    depend on the fields the client saw, but it is honoured when sent.
+    The status becomes 'cancelled' and the row is kept. The constraint
+    ignores cancelled rows, so the slot is free again. If-Match is optional
+    here, but it is checked when the client sends it.
     """
     reservation = await _load_owned(reservation_id, session, current)
     svc.check_if_match(reservation, if_match, required=False)

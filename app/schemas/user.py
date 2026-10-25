@@ -1,8 +1,7 @@
-"""User request/response schemas.
+"""User request and response schemas.
 
-Server-side validation: never rely on client checks. Pydantic rejects a
-malformed payload before any handler code runs, which is what produces the
-422/400 responses.
+Pydantic checks every request before the handler runs, which gives the
+422 responses.
 """
 
 from __future__ import annotations
@@ -20,24 +19,22 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(min_length=2, max_length=120)
     phone: str | None = Field(default=None, max_length=32)
-    # Self-registration always creates a customer. Role escalation is an
-    # admin-only operation, never something a signup payload can request.
+    # Signup always creates a customer. Only an admin can change roles.
 
 
 class UserUpdate(BaseModel):
-    """Self-service profile edit. Every field is optional; only the ones
-    sent are changed. Role, password and is_active are deliberately absent -
-    a profile edit can never escalate privileges or bypass a password check.
+    """Profile edit. All fields are optional and only the ones sent are
+    changed. Role, password and is_active cannot be changed here.
     """
 
     email: EmailStr | None = None
     full_name: str | None = Field(default=None, min_length=2, max_length=120)
-    # Sending null clears the phone number; omitting it leaves it unchanged.
+    # null clears the phone number; leaving it out keeps it.
     phone: str | None = Field(default=None, max_length=32)
 
 
 class UserOut(BaseModel):
-    """Response model. Note what is ABSENT: password_hash is never returned."""
+    """User response. password_hash is never included."""
 
     model_config = ConfigDict(from_attributes=True)
 

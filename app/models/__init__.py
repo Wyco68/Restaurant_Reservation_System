@@ -1,8 +1,7 @@
 """SQLAlchemy models.
 
-Imported here so Alembic autogenerate and relationship resolution both see
-every table. Import order matters only in that all models must be loaded
-before mappers are configured.
+All models are imported here so Alembic and the relationships can find
+every table.
 """
 
 from app.models.base import Base

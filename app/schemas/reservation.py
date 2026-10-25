@@ -1,9 +1,8 @@
 """Reservation schemas.
 
-ReservationOut is the read path the name-split migration switches. See
-`app/services/reservations.py::to_out` - the response shape stays identical
-while the underlying column changes, which is the whole point of the
-Expand-Contract pattern.
+ReservationOut keeps the same shape during the name migration, even when
+the API switches which columns it reads (see to_out in
+app/services/reservations.py).
 """
 
 from __future__ import annotations
@@ -57,13 +56,12 @@ class ReservationOut(BaseModel):
     ends_at: datetime
     status: ReservationStatus
     created_at: datetime
-    # Row version for optimistic concurrency. Also sent as the ETag header;
-    # send it back as If-Match to PATCH.
+    # Version for optimistic locking, also sent as the ETag header. Send it
+    # back in If-Match to PATCH.
     version: int
 
 
 class ReservationListItem(ReservationOut):
-    """GET /reservations row: one JOINed query, so the client never has to
-    fetch each restaurant to show its name."""
+    """One row of GET /reservations, with the restaurant name joined in."""
 
     restaurant_name: str

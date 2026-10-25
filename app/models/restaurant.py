@@ -1,4 +1,4 @@
-"""restaurants and restaurant_tables."""
+"""Restaurants and their tables."""
 
 from __future__ import annotations
 
@@ -38,9 +38,8 @@ class Restaurant(Base, TimestampMixin):
     city: Mapped[str] = mapped_column(String(80), nullable=False)
     address: Mapped[str] = mapped_column(Text, nullable=False)
     price_range: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    # Denormalized rollup of the MongoDB reviews collection. NOT a source of
-    # truth - it exists so restaurant search can sort by rating without a
-    # per-row cross-engine call (an N+1 across two databases).
+    # Copy of the average rating from the MongoDB reviews, kept here so the
+    # search can sort by rating without asking MongoDB for every restaurant.
     avg_rating: Mapped[Decimal | None] = mapped_column(Numeric(2, 1), nullable=True)
 
     owner: Mapped["User"] = relationship(back_populates="restaurants")  # noqa: F821
@@ -61,7 +60,7 @@ class Restaurant(Base, TimestampMixin):
 
 
 class RestaurantTable(Base):
-    """The scarce resource. Everything about concurrency control orbits this."""
+    """A table that customers book. Bookings for one table must not overlap."""
 
     __tablename__ = "restaurant_tables"
 

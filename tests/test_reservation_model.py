@@ -1,8 +1,8 @@
-"""The Reservation mapping never names a migration column it was not asked
-to, and never writes over a version it did not read.
+"""Tests for the Reservation model: it only uses the name columns it is
+asked to, and every update checks the version.
 
-If any of the column tests fail, the API breaks on a schema where that
-column does not exist - before 0002 or after 0004.
+If a column test fails, the API would break on a schema where that column
+does not exist (before 0002 or after 0004).
 """
 
 from __future__ import annotations
@@ -39,10 +39,10 @@ def test_undefer_loads_only_the_named_column():
 
 
 def test_orm_insert_omits_unset_name_columns(db):
-    """FetchedValue: an unset column is left out of the INSERT, not sent as NULL.
+    """FetchedValue: a column that is not set is left out of the INSERT.
 
-    The INSERT is captured and rolled back; whether the database accepts it
-    (FK, NOT NULL) does not matter here, only what the ORM asked for.
+    The INSERT is captured and rolled back. We only check the SQL the ORM
+    sent, so it does not matter if the database accepts it.
     """
     sent: list[str] = []
     with db.connect() as conn:
@@ -75,11 +75,11 @@ def test_unloaded_name_column_raises_instead_of_lazy_loading(db):
             _ = r.guest_name
 
 
-# ------------------------------------------------- optimistic concurrency
+# Optimistic locking
 
 
 def test_update_is_guarded_by_xmin(db):
-    """Every ORM UPDATE carries the version it read and returns the new one."""
+    """Every ORM UPDATE checks the version it read and returns the new one."""
     sent: list[str] = []
     with db.connect() as conn:
         event.listen(conn, "before_cursor_execute", lambda *a: sent.append(a[2]))
@@ -97,7 +97,7 @@ def test_update_is_guarded_by_xmin(db):
 
 
 def test_stale_version_raises_instead_of_overwriting(db):
-    """Two sessions read the same version; the second write must fail."""
+    """Two sessions read the same version; the second save must fail."""
     with Session(db) as first, Session(db) as second:
         a = first.scalar(select(Reservation).order_by(Reservation.id.desc()).limit(1))
         if a is None:

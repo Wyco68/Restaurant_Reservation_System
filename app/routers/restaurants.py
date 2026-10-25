@@ -1,4 +1,4 @@
-"""Restaurants router - search, detail, availability."""
+"""Restaurants: search, detail and table availability."""
 
 from __future__ import annotations
 
@@ -38,11 +38,10 @@ async def search_restaurants(
     max_price_range: Annotated[int | None, Query(ge=1, le=4)] = None,
     min_rating: Annotated[float | None, Query(ge=1, le=5)] = None,
 ) -> Page[RestaurantSummary]:
-    """Paginated restaurant search.
+    """Search restaurants, with paging.
 
-    PROJECTION: selects six named columns rather than the whole entity, so
-    `address` and the owner relationship are never loaded for a result list
-    This is a projection: only the columns the response needs are read.
+    Only the six columns the list shows are selected, so address and owner
+    are not loaded.
     """
     filters = []
     if city:
@@ -87,7 +86,7 @@ async def search_restaurants(
 
 @router.get("/{restaurant_id}", response_model=RestaurantOut)
 async def get_restaurant(restaurant_id: int, session: Session) -> RestaurantOut:
-    """PROJECTION: exactly the RestaurantOut columns; owner_id stays on disk."""
+    """Selects only the columns RestaurantOut needs (no owner_id)."""
     row = (
         await session.execute(
             select(
@@ -115,25 +114,22 @@ async def check_availability(
     session: Session,
     party_size: Annotated[int, Query(ge=1, le=20)] = 2,
 ) -> list[AvailabilitySlot]:
-    """Which tables are free for a window.
+    """Which tables are free for a time window.
 
-    ADVISORY ONLY. A table shown as free here can be taken before the
-    booking request arrives - that is an unavoidable race in any
-    check-then-act flow. The authoritative answer is the 201-or-409 from
-    POST /reservations, which the EXCLUDE constraint decides.
+    This is only a hint. Someone can book a table between this call and
+    the booking request. POST /reservations gives the real answer (201 or
+    409).
     """
     if ends_at <= starts_at:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "ends_at must be after starts_at")
 
-    # ONE query for every table and its status - no per-table lookup (N+1).
+    # One query for all tables, with a NOT EXISTS check for each one.
     #
-    # The probe is written exactly as the EXCLUDE constraint is - same range
-    # expression, same '[)' bounds, same WHERE - so PostgreSQL answers it
-    # from the constraint's own GiST index (no_double_booking). The status
-    # is a fixed literal, not a parameter: with a parameter the planner
-    # cannot prove the partial index applies and falls back to scanning
-    # every reservation. starts_at < x AND ends_at > y means the same thing
-    # but no index serves it. See docs/PERFORMANCE.md for both plans.
+    # The overlap check uses the same tstzrange expression and WHERE as the
+    # no_double_booking constraint, so PostgreSQL can use its GiST index.
+    # 'cancelled' is written into the SQL as a constant, because with a
+    # parameter PostgreSQL sometimes did not use the index.
+    # docs/PERFORMANCE.md shows both query plans.
     bounds = literal_column("'[)'")
     taken = exists().where(
         Reservation.restaurant_table_id == RestaurantTable.id,

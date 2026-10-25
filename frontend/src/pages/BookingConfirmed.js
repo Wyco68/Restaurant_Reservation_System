@@ -1,5 +1,5 @@
-/* Step 3 — confirmed. Deep-linkable: the reservation is re-fetched by id,
-   so the URL can be reloaded or shared and still render. */
+/* Step 3, confirmed. The reservation is loaded by id, so the page still
+   works after a reload or from a shared link. */
 import { onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api.js";

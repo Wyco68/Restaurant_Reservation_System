@@ -1,24 +1,21 @@
-"""Runtime control of the guest_name -> first_name / last_name migration.
+"""Controls the guest_name -> first_name / last_name migration while the app runs.
 
-The schema steps are Alembic revisions; the application steps are phases of
-this module. Phases change at runtime through the admin API, so no step of
-the migration needs a restart - a restart under live traffic is itself
-downtime.
+The schema changes are Alembic migrations. The app side is a phase in this
+module, which an admin changes through the API, so no step needs a
+restart.
 
-    phase        writes                      reads                 schema needed
-    -----------  --------------------------  --------------------  -----------------------------
-    legacy       guest_name                  guest_name            guest_name present
-    dual_write   guest_name + first + last   guest_name            first/last present (0002)
-    read_new     guest_name + first + last   first + last          backfill complete
+    phase        writes                      reads                 needs
+    -----------  --------------------------  --------------------  ---------------------------
+    legacy       guest_name                  guest_name            guest_name
+    dual_write   guest_name + first + last   guest_name            first/last columns (0002)
+    read_new     guest_name + first + last   first + last          backfill finished
     new_only     first + last                first + last          guest_name nullable (0003)
 
-Every transition is checked against the live schema and data before it is
-accepted, so an out-of-order step is refused with a reason instead of
-surfacing later as a 500.
+Before a phase change is accepted we check the schema and the data, so a
+step done in the wrong order is refused with a reason.
 
-The phase lives in process memory: one uvicorn worker, one phase. With
-several workers each would need the change; that is the known limit of this
-design and the reason the demo runs a single worker.
+The phase is kept in memory, so each uvicorn worker has its own. That is
+why we run a single worker for the demo.
 """
 
 from __future__ import annotations
@@ -43,8 +40,8 @@ class Phase(str, enum.Enum):
     NEW_ONLY = "new_only"
 
 
-# Column sets per phase. The service builds every reservation read and write
-# from these, so a column that is not in the current phase is never touched.
+# Name columns written and read in each phase. The reservation service
+# only uses these, so it never touches a column the phase does not have.
 WRITE_COLUMNS: dict[Phase, tuple[str, ...]] = {
     Phase.LEGACY: ("guest_name",),
     Phase.DUAL_WRITE: ("guest_name", "first_name", "last_name"),
@@ -85,9 +82,10 @@ class SchemaState:
 
 
 def name_mismatch():
-    """first + last rebuilt != guest_name, normalised the way split_guest_name
-    normalises (trimmed, whitespace runs collapsed). Same rule as
-    scripts/backfill_names.py --verify."""
+    """True when first + last does not match guest_name, after trimming and
+    collapsing spaces the same way split_guest_name does. The backfill's
+    --verify uses the same rule.
+    """
     r = Reservation
     rebuilt = func.btrim(func.concat_ws(" ", r.first_name, r.last_name))
     legacy = func.regexp_replace(func.btrim(r.guest_name), r"\s+", " ", "g")
@@ -95,15 +93,14 @@ def name_mismatch():
 
 
 async def schema_state(conn: AsyncConnection) -> SchemaState:
-    """Read the live reservations schema and the counts the guards need."""
+    """Read the reservations schema and the counts the checks need."""
     columns = await conn.run_sync(
         lambda sync: {c["name"]: c for c in inspect(sync).get_columns("reservations")}
     )
     guest = columns.get("guest_name")
     has_new = "first_name" in columns and "last_name" in columns
 
-    # Counts use Core expressions over the model's columns. Each WHERE clause
-    # names only columns confirmed present above.
+    # Each count only uses columns we checked exist above.
     count = select(func.count()).select_from(Reservation)
     awaiting = (
         await conn.scalar(count.where(Reservation.first_name.is_(None))) if has_new else None
@@ -125,7 +122,7 @@ async def schema_state(conn: AsyncConnection) -> SchemaState:
 
 
 def refusal(target: Phase, state: SchemaState) -> str | None:
-    """Why `target` is unsafe right now, or None if it is safe."""
+    """The reason `target` is not allowed now, or None if it is."""
     writes, reads = WRITE_COLUMNS[target], READ_COLUMNS[target]
 
     if "guest_name" in writes + reads and not state.guest_name_present:
@@ -142,8 +139,8 @@ def refusal(target: Phase, state: SchemaState) -> str | None:
             f"{state.awaiting_backfill} reservations still await backfill; "
             "run scripts/backfill_names.py first"
         )
-    # Catches names edited during a detour back to legacy: guest_name moved
-    # on, first/last did not, and the backfill only fills NULLs.
+    # Catches names changed after going back to legacy: guest_name was
+    # updated but first/last were not, and the backfill only fills NULLs.
     if "first_name" in reads and state.mismatched:
         return (
             f"{state.mismatched} reservations have first/last names that disagree "
@@ -162,11 +159,10 @@ def set_phase(target: Phase) -> None:
 
 
 async def reconcile_with_schema(engine: AsyncEngine) -> None:
-    """At startup, fall back to a phase the live schema can serve.
+    """At startup, fall back to a phase the current schema supports.
 
-    The configured phase is a default for a fresh process. If the schema has
-    moved on - for example a restart after the Contract step while .env still
-    says dual_write - serving that phase would fail every request.
+    For example, after a restart following the Contract step, .env may still
+    say dual_write, which would make every request fail.
     """
     async with engine.connect() as conn:
         state = await schema_state(conn)

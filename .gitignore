@@ -1,4 +1,4 @@
-# --- Secrets and configuration ---
+# Secrets and configuration
 .env
 .env.*
 !.env.example
@@ -8,7 +8,7 @@
 secrets.json
 appsettings.Development.json
 
-# --- Database files ---
+# Database files
 *.db
 *.sqlite
 *.sqlite3
@@ -18,7 +18,7 @@ dump/
 pgdata/
 mongodata/
 
-# --- Python ---
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -31,7 +31,7 @@ env/
 .coverage
 htmlcov/
 
-# --- Editors / OS ---
+# Editors and OS
 .vscode/
 .idea/
 *.swp
@@ -39,16 +39,13 @@ htmlcov/
 Thumbs.db
 desktop.ini
 
-# --- Logs and local artifacts ---
+# Logs and local output
 *.log
 logs/
 demo/*.mp4
 loadtest/results/
 
-# --- Handoff bundles ---
-# A member's bundle is unzipped outside the repo, applied, and committed by
-# its owner. The bundle itself - instructions, patch, file copies, or the
-# leftovers of a failed apply - never belongs in the repository.
+# Patch files and local working folders
 handoff/
 .handoff-internal.md
 READ_ME_FIRST.md

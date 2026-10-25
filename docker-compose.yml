@@ -1,10 +1,9 @@
-# TableFlow — local development infrastructure
-# Launches both database engines with volume persistence.
+# TableFlow: local databases for development.
+# Starts PostgreSQL and MongoDB with data volumes.
 #
-# SECURITY: no credentials are hard-coded here. Every value comes from .env,
-# which is gitignored. Copy .env.example to .env and change the passwords
-# before running. The defaults in .env.example are development-only and must
-# never be reused for anything reachable from a network.
+# There are no passwords in this file. They come from .env, which is not in
+# git. Copy .env.example to .env and change the passwords before running.
+# The example values are only for local development.
 
 services:
   postgres_db:
@@ -21,8 +20,8 @@ services:
     volumes:
       # Data survives `docker compose down`.
       - postgres_data:/var/lib/postgresql/data
-      # Initial DDL setup scripts. Files here run once, in
-      # alphabetical order, the first time the volume is created.
+      # Setup scripts. They run once, in alphabetical order, when the
+      # volume is first created.
       - ./docker/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]

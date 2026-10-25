@@ -1,7 +1,7 @@
-"""Products router (MongoDB).
+"""Products (MongoDB).
 
-    GET  /api/v1/products   -> 200, paginated catalogue
-    POST /api/v1/products   -> 201, dynamic attributes
+GET  /api/v1/products   -> 200, paginated catalogue
+POST /api/v1/products   -> 201, with any attributes
 """
 
 from __future__ import annotations
@@ -40,15 +40,10 @@ async def list_products(
     available_only: bool = True,
     q: Annotated[str | None, Query(max_length=80)] = None,
 ) -> Page[ProductSummary]:
-    """Paginated, filtered, projected catalogue.
+    """Product list with filters and paging.
 
-    `limit` is capped at 100 by the validator so a client cannot ask for the
-    whole collection in one request.
-
-    PROJECTION: the second argument to find() lists exactly the fields
-    ProductSummary needs. `description` and `attributes` are never read off
-    disk for a list request. Fetching the full documents here would move
-    megabytes to render a menu list.
+    limit is capped at 100. The find() projection only returns the fields
+    ProductSummary needs, so description and attributes are not read.
     """
     query: dict[str, Any] = {}
     if restaurant_id is not None:
@@ -98,7 +93,7 @@ async def list_products(
 
 @router.get("/{product_id}", response_model=ProductOut)
 async def get_product(product_id: str) -> ProductOut:
-    """Full document including attributes - the detail view."""
+    """One product with all its fields."""
     try:
         oid = ObjectId(product_id)
     except InvalidId as exc:
@@ -117,13 +112,10 @@ async def get_product(product_id: str) -> ProductOut:
     dependencies=[Depends(require_role(UserRole.STAFF, UserRole.ADMIN))],
 )
 async def create_product(payload: ProductCreate) -> ProductOut:
-    """Create a menu item with arbitrary dynamic attributes.
+    """Create a menu item. Staff and admin only.
 
-    `attributes` is stored verbatim. A curry sends spice_level and protein;
-    a pizza sends size, crust and toppings[]. Both land in the same
-    collection with no schema change.
-
-    Staff/admin only - an open catalogue-write endpoint is a defacement API.
+    attributes is saved as it is, so a curry can have spice_level and a
+    pizza can have size and toppings in the same collection.
     """
     now = datetime.now(UTC)
     doc = payload.model_dump()

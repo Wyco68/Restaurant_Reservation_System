@@ -1,4 +1,4 @@
-"""Initial schema: 6 normalized tables, constraints, indexes.
+"""Initial schema: 6 tables with constraints and indexes.
 
 Revision ID: 0001
 Revises:
@@ -18,10 +18,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Extensions are also created by docker/initdb/01_extensions.sql for a
-    # fresh container. Repeated here with IF NOT EXISTS so `alembic upgrade`
-    # also works against a database that was not created by that script
-    # (a teammate's existing local instance, or CI).
+    # docker/initdb/01_extensions.sql also creates these for a new container.
+    # IF NOT EXISTS here makes the migration work on other databases too.
     op.execute("CREATE EXTENSION IF NOT EXISTS citext")
     op.execute("CREATE EXTENSION IF NOT EXISTS btree_gist")
     op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
@@ -40,7 +38,7 @@ def upgrade() -> None:
     reservation_status.create(op.get_bind(), checkfirst=True)
     order_status.create(op.get_bind(), checkfirst=True)
 
-    # ------------------------------------------------------------------ users
+    # users
     op.create_table(
         "users",
         sa.Column(
@@ -67,7 +65,7 @@ def upgrade() -> None:
     )
     op.create_index("idx_users_role", "users", ["role"])
 
-    # ------------------------------------------------------------ restaurants
+    # restaurants
     op.create_table(
         "restaurants",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
@@ -100,7 +98,7 @@ def upgrade() -> None:
         "CREATE INDEX idx_restaurants_rating ON restaurants (avg_rating DESC NULLS LAST)"
     )
 
-    # ----------------------------------------------------- restaurant_tables
+    # restaurant_tables
     op.create_table(
         "restaurant_tables",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
@@ -120,17 +118,15 @@ def upgrade() -> None:
     )
     op.create_index("idx_tables_restaurant", "restaurant_tables", ["restaurant_id"])
 
-    # ----------------------------------------------------------- reservations
+    # reservations
     op.create_table(
         "reservations",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("restaurant_id", sa.BigInteger(), nullable=False),
         sa.Column("restaurant_table_id", sa.BigInteger(), nullable=False),
-        # Migration target, BASELINE STATE: guest_name only.
-        # first_name / last_name are added by revision 0002 (the Expand
-        # step) so the Expand-Contract sequence is a real, runnable
-        # migration rather than a fait accompli. See docs/DESIGN.md.
+        # Only guest_name at first. first_name and last_name are added by 0002
+        # (Expand), so the CP2 migration has real work to do.
         sa.Column("guest_name", sa.String(120), nullable=False),
         sa.Column("party_size", sa.SmallInteger(), nullable=False),
         sa.Column("starts_at", sa.DateTime(timezone=True), nullable=False),
@@ -166,22 +162,14 @@ def upgrade() -> None:
         "idx_reservations_restaurant_time", "reservations", ["restaurant_id", "starts_at"]
     )
 
-    # ===================================================================
-    # THE DOUBLE-BOOKING CONSTRAINT
-    # ===================================================================
-    # No two non-cancelled reservations may share a table AND have
-    # overlapping time ranges. Requires btree_gist, because the constraint
-    # mixes an equality operator with a range-overlap operator in one GiST
-    # index.
+    # Double-booking constraint: two reservations that are not cancelled
+    # cannot use the same table at overlapping times. It needs btree_gist,
+    # because it mixes = and && in one GiST index.
     #
-    # '[)' bounds: a booking ending at 19:00 and one starting at 19:00 do
-    # NOT overlap - correct for back-to-back seatings.
-    #
-    # WHERE status <> 'cancelled': a cancellation genuinely frees the slot.
-    #
-    # This makes double-booking structurally impossible. Concurrent inserts
-    # produce exactly one commit; the rest raise IntegrityError, which the
-    # API maps to 409 Conflict.
+    # '[)' means a booking that ends at 19:00 and one that starts at 19:00 do
+    # not overlap. Cancelled bookings are ignored, so cancelling frees the
+    # slot. When two overlapping inserts arrive together, one commits and the
+    # other gets an IntegrityError, which the API returns as 409.
     op.execute(
         """
         ALTER TABLE reservations
@@ -194,7 +182,7 @@ def upgrade() -> None:
         """
     )
 
-    # ----------------------------------------------------------------- orders
+    # orders
     op.create_table(
         "orders",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
@@ -228,14 +216,13 @@ def upgrade() -> None:
     op.create_index("idx_orders_restaurant_status", "orders", ["restaurant_id", "status"])
     op.create_index("idx_orders_reservation", "orders", ["reservation_id"])
 
-    # ------------------------------------------------------------ order_items
+    # order_items
     op.create_table(
         "order_items",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("order_id", sa.BigInteger(), nullable=False),
-        # Soft reference to a MongoDB products._id. No FK is possible across
-        # engines; integrity is maintained by validating against Mongo before
-        # this row is written, and by the snapshot columns below.
+        # MongoDB products._id, so there is no foreign key. The API checks the
+        # product in MongoDB before saving, and copies name and price below.
         sa.Column("product_id", sa.String(24), nullable=False),
         sa.Column("product_name", sa.String(150), nullable=False),
         sa.Column("unit_price", sa.Numeric(10, 2), nullable=False),

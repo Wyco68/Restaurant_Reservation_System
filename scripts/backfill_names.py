@@ -1,28 +1,20 @@
-"""Step 3 of 5 - BACKFILL: migrate legacy guest_name into first/last.
+"""Step 3 of 5, Backfill: copy guest_name into first_name and last_name.
 
-Runs WHILE the API is serving traffic in phase dual_write. Design
-constraints that follow from that, each a deliberate choice:
+This runs while the API is serving traffic in phase dual_write, so:
 
-  KEYSET CURSOR  Batches are `id > last_id ORDER BY id LIMIT n`, an index
-                 range scan on the partial idx_reservations_backfill. Never
-                 OFFSET, which rescans every skipped row on every batch.
-
-  SHORT BATCHES  Each batch is its own transaction, so row locks last one
-                 batch. One UPDATE over the whole table would hold them for
-                 the entire run and block concurrent bookings.
-
-  SKIP LOCKED    A row a live request is updating right now is skipped, not
-                 waited on. A later pass picks it up.
-
-  CHECKPOINT     Every batch prints the last id it committed. --start-after
-                 resumes there. Restarting without it is also safe: the
-                 `first_name IS NULL` predicate skips finished rows.
-
-  RACE-SAFE      The UPDATE re-checks `first_name IS NULL`, so a row that
-                 dual-write filled between our SELECT and UPDATE keeps the
-                 fresher value.
-
-  THROTTLED      Sleeps between batches so the backfill yields to traffic.
+  - Batches use a keyset cursor (id > last_id ORDER BY id LIMIT n) on the
+    partial index idx_reservations_backfill. OFFSET would re-read all the
+    skipped rows every batch.
+  - Each batch is its own short transaction, so rows are only locked for
+    one batch.
+  - FOR UPDATE SKIP LOCKED skips rows a request is updating right now. A
+    second pass picks them up.
+  - Every batch prints the last id it committed, and --start-after resumes
+    from there. Running again from the start is also safe, because finished
+    rows no longer match first_name IS NULL.
+  - The UPDATE checks first_name IS NULL again, so a row filled by dual
+    write in the meantime is not overwritten.
+  - It sleeps between batches to leave room for normal traffic.
 
 Usage:
     python scripts/backfill_names.py                  # run, then verify
@@ -48,13 +40,12 @@ from app.migration import name_mismatch  # noqa: E402
 from app.models import Reservation  # noqa: E402
 from app.services.reservations import split_guest_name  # noqa: E402
 
-# split_guest_name is imported from the service rather than reimplemented,
-# so the backfill and the dual-write path can never disagree about how a
-# name is split. A second copy here would be a latent data-inconsistency bug.
+# split_guest_name comes from the service, so the backfill and the API
+# split names the same way.
 
 t = Reservation.__table__
 
-# One statement, executed once per batch with a list of parameter sets.
+# One UPDATE per batch, run with a list of parameter sets.
 FILL = (
     update(t)
     .where(t.c.id == bindparam("row_id"))
@@ -66,7 +57,7 @@ MAX_PASSES = 5
 
 
 def run_pass(session: Session, start_after: int, batch_size: int, sleep: float) -> int:
-    """One sweep of the table from `start_after` to the end. Returns rows filled."""
+    """One pass over the table from `start_after` to the end. Returns rows filled."""
     last_id, filled, batch_no = start_after, 0, 0
     while True:
         rows = session.execute(
@@ -108,8 +99,8 @@ def run_backfill(session: Session, start_after: int, batch_size: int, sleep: flo
         total += filled
         left = awaiting(session)
         print(f"  pass {n}: filled {filled:,}, {left:,} still awaiting")
-        # Leftovers are rows that were locked when the cursor passed them.
-        # Sweep again from the start; stop if a pass makes no progress.
+        # Rows left over were locked when we passed them. Do another pass, and
+        # stop if a pass fills nothing.
         if left == 0 or filled == 0:
             break
         start_after = 0
@@ -117,7 +108,7 @@ def run_backfill(session: Session, start_after: int, batch_size: int, sleep: flo
 
 
 def verify(session: Session) -> bool:
-    """Consistency report. Run before the backfill and after it."""
+    """Check the data. Run it before and after the backfill."""
     columns = {c["name"] for c in inspect(session.connection()).get_columns("reservations")}
     total = session.scalar(select(func.count()).select_from(t))
     remaining = awaiting(session)
@@ -129,8 +120,8 @@ def verify(session: Session) -> bool:
         print("\n  guest_name dropped (0004) - nothing left to compare")
         return remaining == 0
 
-    # Does the reassembled name match the legacy column? The rule is the
-    # API's own read_new gate, imported so the two cannot disagree.
+    # Does first + last match guest_name? Uses the same check as the API's
+    # read_new phase change.
     mismatched = session.scalar(select(func.count()).select_from(t).where(name_mismatch()))
     new_only = session.scalar(
         select(func.count()).select_from(t).where(t.c.guest_name.is_(None))

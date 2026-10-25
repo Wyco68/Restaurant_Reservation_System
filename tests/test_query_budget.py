@@ -1,9 +1,8 @@
-"""Query audit (CP3 §2.2): list endpoints run O(1) SQL, reads fetch only
-the columns they return.
+"""Query audit (CP3 §2.2): list endpoints use a fixed number of queries and
+reads only select the columns they return.
 
-Every statement the app sends is captured from the engine. An endpoint is
-O(1) when serving more rows does not send more statements; an N+1 shows up
-here as a count that grows with the data.
+We record every SQL statement the app sends. If an endpoint sends more
+statements when there are more rows, it has an N+1 problem.
 """
 
 from __future__ import annotations
@@ -62,11 +61,11 @@ async def book_somewhere(client: AsyncClient, headers: dict, restaurant_id: int)
     assert r.status_code == 201, r.text
 
 
-# ------------------------------------------------------------- O(1) lists
+# Lists with a fixed number of queries
 
 
 async def test_my_bookings_is_constant_in_bookings(client, auth_headers, sql):
-    """1 booking or 5 at 5 different restaurants: the same statements."""
+    """1 booking or 5 bookings at 5 restaurants: the same number of statements."""
     restaurants = [r["id"] for r in (await client.get("/api/v1/restaurants?limit=5")).json()["items"]]
     list_call = lambda: client.get("/api/v1/reservations", headers=auth_headers)  # noqa: E731
 
@@ -121,7 +120,7 @@ async def test_availability_is_constant_in_tables(client, sql):
     assert len(many) == len(few) <= 2
 
 
-# -------------------------------------------------------------- projection
+# Selected columns
 
 
 def selected(statement: str) -> str:
@@ -139,8 +138,9 @@ async def test_search_never_reads_address_or_owner(client, sql):
 async def test_authenticated_requests_never_read_the_password_hash(
     client, auth_headers, sql
 ):
-    """The caller lookup on every request, and GET /users/{id}, leave the
-    bcrypt hash on disk. Only /auth/login reads it."""
+    """The user lookup on every request and GET /users/{id} do not read the
+    bcrypt hash. Only /auth/login does.
+    """
     me = (await client.get("/api/v1/users/me/profile", headers=auth_headers)).json()
     sent = await statements(sql, client.get(f"/api/v1/users/{me['id']}", headers=auth_headers))
     sent += await statements(sql, client.get("/api/v1/reservations", headers=auth_headers))

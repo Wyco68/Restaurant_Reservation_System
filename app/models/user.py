@@ -1,4 +1,4 @@
-"""users - identity, credentials and authorization."""
+"""Users: login details and roles."""
 
 from __future__ import annotations
 
@@ -21,14 +21,12 @@ class UserRole(str, enum.Enum):
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
-    # UUID rather than a sequence: sequential user IDs leak how many
-    # customers the platform has and make enumeration trivial.
+    # UUID so user ids cannot be guessed or counted.
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
-    # CITEXT: Bob@x.com and bob@x.com are the same account. The UNIQUE index
-    # is what produces the 409 on duplicate signup - an application-level
-    # pre-check races under concurrency, a unique index does not.
+    # CITEXT makes the email case-insensitive. The unique index gives the
+    # 409 on a duplicate signup, even when two signups arrive together.
     email: Mapped[str] = mapped_column(CITEXT, nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -39,7 +37,7 @@ class User(Base, TimestampMixin):
         default=UserRole.CUSTOMER,
         server_default=UserRole.CUSTOMER.value,
     )
-    # Soft-disable. Never hard-delete a user who has orders attached.
+    # Users are disabled instead of deleted, because orders refer to them.
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
     )

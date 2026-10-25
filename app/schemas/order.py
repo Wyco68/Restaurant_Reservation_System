@@ -1,8 +1,7 @@
 """Order schemas.
 
-Note what the client is NOT allowed to send: unit_price and total_amount.
-Prices are read from MongoDB server-side. A client-supplied price is a
-free-lunch vulnerability.
+The client cannot send unit_price or total_amount. Prices are read from
+MongoDB on the server.
 """
 
 from __future__ import annotations
@@ -55,7 +54,7 @@ class OrderOut(BaseModel):
 
 
 class OrderSummary(BaseModel):
-    """GET /orders row - aggregated in SQL, no line items carried."""
+    """One row of GET /orders. The item count is computed in SQL."""
 
     model_config = ConfigDict(from_attributes=True)
 

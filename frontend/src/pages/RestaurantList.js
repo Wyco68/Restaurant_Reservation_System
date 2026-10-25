@@ -34,8 +34,8 @@ export default {
       }
     }
 
-    // Filters live in the query string, so a filtered list is shareable and the
-    // back button returns to the exact view the user left.
+    // Filters are kept in the URL, so the link can be shared and the back
+    // button returns to the same list.
     function applyFilters() {
       router.push({
         path: "/restaurants",

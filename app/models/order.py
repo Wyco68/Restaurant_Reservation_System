@@ -1,10 +1,9 @@
-"""orders and order_items - the dual-database seam.
+"""Orders and order items.
 
-order_items.product_id is a SOFT reference to a MongoDB products._id.
-No foreign key is possible across engines, so integrity is maintained by:
-  1. validating every product against Mongo BEFORE the PG transaction opens
-  2. snapshotting name and price into the row at purchase time
-  3. never cascading a Mongo delete into order history
+order_items.product_id points to a MongoDB product, so there is no foreign
+key. Instead we check every product in MongoDB before the order is saved,
+and copy the name and price into the row so the order history stays
+correct if the menu changes.
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ class Order(Base, TimestampMixin):
     restaurant_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("restaurants.id", ondelete="RESTRICT"), nullable=False
     )
-    # Nullable: a pre-order can exist without a table reservation.
+    # An order does not need a reservation.
     reservation_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("reservations.id", ondelete="SET NULL"), nullable=True
     )
@@ -58,8 +57,7 @@ class Order(Base, TimestampMixin):
         default=OrderStatus.PLACED,
         server_default=OrderStatus.PLACED.value,
     )
-    # NUMERIC, never FLOAT. Binary floating point cannot represent 0.10
-    # exactly and the error compounds across line items.
+    # NUMERIC for money, because float cannot store 0.10 exactly.
     total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     currency: Mapped[str] = mapped_column(
         String(3), nullable=False, server_default=text("'THB'")
@@ -85,14 +83,14 @@ class OrderItem(Base):
     order_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False
     )
-    # Soft reference to mongo products._id. 24-char hex ObjectId.
+    # MongoDB products._id as a 24-character hex string.
     product_id: Mapped[str] = mapped_column(String(24), nullable=False)
-    # Snapshots. A receipt must show what the customer actually paid, even
-    # after the menu item is renamed, repriced or removed.
+    # Copied from the menu at order time, so the receipt does not change
+    # when the menu item does.
     product_name: Mapped[str] = mapped_column(String(150), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     quantity: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    # The dynamic options the customer chose, e.g. {"size": "L", "spice_level": 3}
+    # Options the customer chose, e.g. {"size": "L", "spice_level": 3}
     selected_attributes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     order: Mapped["Order"] = relationship(back_populates="items")

@@ -1,10 +1,8 @@
 """Alembic environment.
 
-Runs with a SYNCHRONOUS engine even though the application is async. Alembic
-is a CLI tool run by a human between deploys; there is nothing to gain from
-async here and the sync path is far simpler to debug.
-
-The database URL comes from the environment, never from alembic.ini.
+Migrations use a normal (sync) engine even though the app is async, because
+Alembic is run by hand from the command line. The database URL is read from
+the environment.
 """
 
 from logging.config import fileConfig
@@ -13,7 +11,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool, text
 
 from app.config import settings
-from app.models import Base  # noqa: F401 - registers every table on Base.metadata
+from app.models import Base  # noqa: F401 (registers every table on Base.metadata)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.postgres_sync_dsn)
@@ -43,11 +41,9 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        # Migrations run under live traffic. An ALTER TABLE waiting for its
-        # ACCESS EXCLUSIVE lock (behind a slow transaction) queues every
-        # later query on the table behind it - an outage caused by a
-        # migration that has not even started. Give up after 5 s instead;
-        # the migration fails cleanly and is simply re-run.
+        # Migrations run while the API is serving traffic. An ALTER TABLE that
+        # waits for its lock makes every later query on the table wait too, so we
+        # give up after 5 s. The migration fails and can be run again.
         connection.execute(text("SET lock_timeout = '5s'"))
         connection.commit()
         context.configure(

@@ -1,4 +1,4 @@
-"""PUT /api/v1/admin/migration - runtime phase control and its guards."""
+"""PUT /api/v1/admin/migration: changing the phase and the checks before it."""
 
 from __future__ import annotations
 
@@ -74,9 +74,9 @@ async def test_unknown_phase_rejected(client: AsyncClient, admin_headers: dict):
     assert r.status_code == 422
 
 
-# ------------------------------------------------ guard rules, no database
+# Phase checks, without the database
 
-EXPANDED = SchemaState(  # after 0002 and a complete, consistent backfill
+EXPANDED = SchemaState(  # after 0002 and a finished backfill
     guest_name_present=True, guest_name_nullable=False, new_columns_present=True,
     awaiting_backfill=0, mismatched=0, missing_legacy=0,
 )

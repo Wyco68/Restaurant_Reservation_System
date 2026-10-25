@@ -1,9 +1,8 @@
 /*
- * Step 2 — reserve.
+ * Step 2, reserve.
  *
- * Progressive disclosure: date and party size first, because the table list
- * is meaningless until both are known. Tables reload whenever either
- * changes, so the options on screen always answer the query on screen.
+ * The user picks the date and party size first, because the table list
+ * depends on both. The tables reload whenever either one changes.
  */
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -50,8 +49,8 @@ export default {
       }
     }
 
-    // Same bounds as the API (1-20). A cleared field would otherwise be sent
-    // as party_size= and come back 422, shown as "no tables free".
+    // Same limits as the API (1 to 20). An empty field would be sent as
+    // party_size= and get a 422, which would show as "no tables free".
     function checkPartySize() {
       const n = form.partySize;
       errors.partySize = Number.isInteger(n) && n >= 1 && n <= 20 ? "" : "Enter 1 to 20 guests.";
@@ -74,8 +73,7 @@ export default {
             `&ends_at=${encodeURIComponent(end.toISOString())}` +
             `&party_size=${form.partySize}`
         );
-        // Drop a stale selection rather than submitting a table that is no
-        // longer free for the new window.
+        // Clear the selected table if it is not free for the new time.
         if (!tables.value.some((t) => t.restaurant_table_id === form.tableId && t.available)) {
           form.tableId = "";
         }
@@ -125,8 +123,8 @@ export default {
         });
         router.push(`/confirmation/${r.id}`);
       } catch (e) {
-        // 409 is the double-booking case: the only error here the user can act
-        // on, so it gets its own wording and a refreshed table list.
+        // 409 means someone else booked the table. Show a clear message and
+        // reload the tables so the user can pick another one.
         formError.value =
           e.status === 409
             ? "Someone just took that table. Pick another from the refreshed list."

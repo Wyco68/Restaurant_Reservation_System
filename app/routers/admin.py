@@ -1,8 +1,8 @@
-"""Admin router - runtime control of the guest_name migration.
+"""Admin endpoints for the guest_name migration.
 
-GET reports the phase and the live schema state; PUT moves to another phase.
-A PUT that the schema or data cannot support yet returns 409 with the
-reason, so the migration cannot be driven out of order. See app/migration.py.
+GET shows the current phase and the schema state. PUT changes the phase.
+If the schema or data is not ready for that phase, PUT returns 409 with
+the reason. See app/migration.py.
 """
 
 from __future__ import annotations

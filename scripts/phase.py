@@ -1,7 +1,7 @@
-"""Show or change the guest_name migration phase of the running API.
+"""Show or change the migration phase of the running API.
 
-Wraps GET / PUT /api/v1/admin/migration so the demo needs no curl and no
-token handling, on any shell.
+Calls GET / PUT /api/v1/admin/migration, so the demo needs no curl or
+token handling.
 
 Usage:
     python scripts/phase.py               # show phase and schema state

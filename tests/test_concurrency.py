@@ -1,20 +1,17 @@
-"""Concurrency verification (CP3 §3): parallel writes cannot corrupt a booking.
+"""Concurrency tests (CP3 §3).
 
-Two shared resources, two mechanisms:
+    a table for a time window   EXCLUDE constraint   one INSERT wins, rest 409
+    an existing reservation     optimistic, xmin     one UPDATE wins, rest 409/412
 
-  a table for a time window   EXCLUDE constraint     one INSERT wins, rest 409
-  an existing reservation     optimistic, xmin       one UPDATE wins, rest 409/412
-
-Every request is a real HTTP request with its own database session and
-connection. Requests that merely run at the same time rarely overlap - each
-transaction lasts about a millisecond - so the edit race holds the row lock
-itself until every request has read, then lets go: the worst case, on every
-run. The outcome is checked in the database, not only in the status codes.
+Each request is a real HTTP request with its own database connection. Our
+transactions take about 1 ms, so requests sent together often do not
+overlap. The edit test therefore locks the row itself until all requests
+have read it, then releases it. Results are checked in the database too.
 
     pytest tests/test_concurrency.py -v
     python tests/test_concurrency.py
 
-Against a running server instead of in-process (same .env as the server):
+Against a running server (with the same .env as the server):
 
     TABLEFLOW_API=http://localhost:8000 pytest tests/test_concurrency.py -v
 """
@@ -34,7 +31,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
-# Run as a script, the project root is not on the path; under pytest it is.
+# When run as a script the project root is not on the path, so add it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import postgres  # noqa: E402
@@ -50,15 +47,15 @@ async def api() -> AsyncClient:
     transport = None if base else ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url=base or "http://test", timeout=30) as c:
         yield c
-    # 20 requests outnumber the pool's 15 connections, so some waited - and
-    # the pool's wait queue is now tied to this test's event loop. A fresh
-    # pool for the next test.
+    # 20 requests are more than the pool's 15 connections, so some had to
+    # wait, and the pool's queue is now tied to this test's event loop. Make
+    # a new pool for the next test.
     await postgres.engine.dispose()
 
 
 @pytest.fixture
 def customers(db) -> list[dict[str, str]]:
-    """Bearer headers for 20 different seeded customers."""
+    """Bearer headers for 20 different customers from the seed data."""
     with db.connect() as conn:
         ids = conn.execute(text(
             "SELECT id FROM users WHERE role = 'customer' AND is_active ORDER BY email LIMIT :n"
@@ -69,7 +66,7 @@ def customers(db) -> list[dict[str, str]]:
 
 
 async def free_table(api: AsyncClient, party_size: int = 2) -> tuple[int, int, datetime]:
-    """A (restaurant, table, start) nobody holds, far enough out to be unused."""
+    """A (restaurant, table, start) that nobody has booked, far in the future."""
     restaurants = (await api.get("/api/v1/restaurants?limit=20")).json()["items"]
     for _ in range(10):
         restaurant_id = random.choice(restaurants)["id"]
@@ -109,28 +106,28 @@ def if_match(headers: dict, version: int) -> dict:
 
 
 async def all_at_once(db, reservation_id: int, requests: list) -> list:
-    """Run the requests while this test holds the row lock, then release it.
+    """Send the requests while this test holds the row lock, then release it.
 
-    A PATCH reads without a lock, so every request reads the same version
-    and passes If-Match, then queues on the lock at its UPDATE. Released,
-    one UPDATE commits; the rest re-check xmin, match 0 rows, and get 409.
-    Remove version_id_col from the model and all of them get 200.
+    PATCH reads without a lock, so every request reads the same version and
+    passes If-Match, then waits at its UPDATE. After the release one UPDATE
+    commits and the others match no rows and get 409. Without version_id_col
+    on the model they would all get 200.
     """
     with db.connect() as gate:
         gate.execute(
             text("SELECT 1 FROM reservations WHERE id = :id FOR UPDATE"), {"id": reservation_id}
         )
         tasks = [asyncio.ensure_future(r) for r in requests]
-        await asyncio.sleep(1)       # every request is now waiting on the lock
+        await asyncio.sleep(1)       # by now every request waits on the lock
         gate.rollback()
     return await asyncio.gather(*tasks)
 
 
-# --------------------------------------------- the same table, 20 customers
+# The same table, 20 customers
 
 
 async def test_twenty_customers_one_table_exactly_one_booking(api, customers, db):
-    """The CP3 §3 scenario: 20 users race for the last free seat."""
+    """The CP3 §3 example: 20 users try to book the last free table."""
     restaurant_id, table_id, start = await free_table(api)
     end = start + timedelta(minutes=90)
 
@@ -159,9 +156,9 @@ async def test_twenty_customers_one_table_exactly_one_booking(api, customers, db
 
 
 async def test_repeated_booking_races_never_fail_with_500(api, customers):
-    """Concurrent INSERTs checked by the EXCLUDE constraint can deadlock;
-    PostgreSQL aborts one. That must come back as 201 or 409 after a retry,
-    never as a 500. One race deadlocks rarely, so run ten."""
+    """Overlapping inserts used to deadlock sometimes and return 500. Each
+    race must give 201 or 409 only, so we run the race ten times.
+    """
     seen = Counter()
     for _ in range(10):
         restaurant_id, table_id, start = await free_table(api)
@@ -184,11 +181,11 @@ async def test_repeated_booking_races_never_fail_with_500(api, customers):
     print(f"\n  10 races x 20 customers -> {dict(seen)}")
 
 
-# ----------------------------------------- the same reservation, 20 edits
+# The same reservation, 20 edits
 
 
 async def test_twenty_concurrent_edits_exactly_one_wins(api, customers, db):
-    """Twenty tabs edit one booking from the same version: one write lands."""
+    """20 tabs edit the same booking from the same version: only one edit is saved."""
     owner = customers[0]
     booking = await book(api, owner)
 
@@ -215,9 +212,10 @@ async def test_twenty_concurrent_edits_exactly_one_wins(api, customers, db):
 
 
 async def test_read_modify_write_loses_no_update(api, customers):
-    """Six clients each add one guest, retrying on conflict. No increment may
-    be lost: without the version check, two clients that read the same
-    party_size would both write the same value."""
+    """Six clients each add one guest and retry on conflict. The final party
+    size must include all six; without the version check two clients could
+    read the same value and one increment would be lost.
+    """
     owner = customers[0]
     booking = await book(api, owner, party_size=8)
     start_size = booking["party_size"]
@@ -246,7 +244,7 @@ async def test_read_modify_write_loses_no_update(api, customers):
     assert final["party_size"] == start_size + clients
 
 
-# ------------------------------------------------------ the precondition
+# If-Match checks
 
 
 async def test_stale_version_returns_412_and_changes_nothing(api, customers):

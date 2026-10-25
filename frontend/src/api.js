@@ -1,9 +1,8 @@
 /*
- * HTTP client and shared session state.
+ * HTTP client and session state.
  *
- * The token lives in module scope rather than localStorage: a JWT in
- * localStorage is readable by any script on the page, and the session is
- * short-lived anyway.
+ * The token is kept in a variable instead of localStorage, because any
+ * script on the page can read localStorage. The token expires soon anyway.
  */
 
 import { reactive, readonly } from "vue";
@@ -39,8 +38,7 @@ export async function api(path, options = {}) {
   const body = res.status === 204 ? null : await res.json().catch(() => null);
 
   if (!res.ok) {
-    // The API answers with {"detail": "..."} consistently, so the UI never
-    // has to invent its own wording for a server-side failure.
+    // The API always returns {"detail": "..."}, so we show that message.
     let detail = body?.detail;
     if (Array.isArray(detail)) detail = detail.map((d) => d.msg).join("; ");
     throw new ApiError(detail || `Request failed (${res.status})`, res.status);

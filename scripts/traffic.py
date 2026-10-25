@@ -1,23 +1,18 @@
-"""Simulated load generator.
+"""Traffic generator.
 
-Two jobs:
+Two modes:
 
-  steady      CP2 zero-downtime proof. Sends a continuous mix of POST, GET
-              and PATCH to /api/v1/reservations at a fixed rate while the
-              migration runs. Every response that carries a booking is
-              checked against the name this script sent, so a migration
-              step that loses or mangles a name is caught, not just one
-              that returns 500. Pass criteria (CP2 §4, plus 4xx):
-                  0 HTTP 5xx, 0 rejected requests, 0 connection errors,
-                  0 missing or wrong names, p99 latency < 500 ms.
-              A PATCH sends If-Match with the last version it saw. A 412
-              or 409 means another writer (the backfill) changed the row;
-              the script re-reads and retries, as any client must, and
-              counts it as a conflict rather than a rejection.
+  steady      For the CP2 migration demo. Sends POST, GET and PATCH
+              requests to /api/v1/reservations at a fixed rate while the
+              migration runs, and checks the name in every response. It
+              passes with 0 5xx, 0 4xx, 0 connection errors, 0 wrong names
+              and p99 under 500 ms (CP2 §4). PATCH sends If-Match with the
+              last version it saw; on 412 or 409 (for example when the
+              backfill changed the row) it reads the booking again and
+              retries.
 
-  concurrent  Double-booking proof. Fires N simultaneous requests for the
-              SAME table and time window. Exactly one must return 201;
-              every other must return 409.
+  concurrent  Sends N booking requests for the same table and time at
+              once. Exactly one must get 201 and the others 409.
 
 Usage:
     python scripts/traffic.py                         # 20 req/s until Ctrl+C
@@ -46,7 +41,7 @@ BASE_URL = "http://localhost:8000"
 EMAIL = "user0100@tableflow.io"   # a seeded customer
 PASSWORD = "TableFlow123!"          # seed-script demo password, not a secret
 
-# Already normalised (single spaces), so every phase must echo them exactly.
+# Single spaces only, so every phase must return them exactly.
 NAMES = [
     "Ada Lovelace", "Grace Hopper", "Alan Turing", "Katherine Johnson",
     "Prince", "Mary Jane Watson", "Edsger Wybe Dijkstra", "Barbara Liskov",
@@ -96,7 +91,7 @@ def booking_payload(restaurant_id: int, table_id: int, start: datetime, name: st
 class Stats:
     codes: Counter[str] = field(default_factory=Counter)
     latencies_ms: list[float] = field(default_factory=list)
-    errors: int = 0         # connection failures, timeouts - no HTTP status
+    errors: int = 0         # connection failures and timeouts (no HTTP status)
     bad_fields: int = 0     # 2xx with a missing or wrong guest_name
     last_problem: str = ""
 
@@ -118,9 +113,9 @@ class Stats:
 
     @property
     def rejected(self) -> int:
-        # Every steady-mode request is valid and every slot distinct, so any
-        # 4xx is a fault too - e.g. a NOT NULL violation surfaces as 400.
-        # Except a PATCH version conflict, which is retried.
+        # Every steady request is valid and uses its own slot, so any 4xx is a
+        # problem (a NOT NULL error shows up as 400). PATCH version conflicts are
+        # retried and not counted here.
         fourxx = sum(n for k, n in self.codes.items() if k.split()[1].startswith("4"))
         return fourxx - self.conflicts
 
@@ -131,11 +126,10 @@ class Stats:
 
 
 class Steady:
-    """One operation every 1/rps seconds, each in its own task.
+    """Starts one operation every 1/rps seconds, each in its own task.
 
-    Scheduling on a fixed clock - not "send a batch, wait for it, sleep" -
-    keeps the rate constant even when the API slows down, which is exactly
-    when a migration step would be hurting it.
+    Starting on a fixed schedule keeps the rate the same even when the API
+    gets slower, which is when a migration step would be hurting it.
     """
 
     def __init__(self, client: httpx.AsyncClient, headers: dict, restaurant_id: int, table_id: int):
@@ -146,8 +140,7 @@ class Steady:
         self.version: dict[int, int] = {}    # reservation id -> last version seen
         self.busy: set[int] = set()          # ids with a request in flight
         self.slot = 0
-        # A random start date, so a rerun never lands on the slots an earlier
-        # run left booked on the same table.
+        # Random start date, so a rerun does not hit slots an earlier run booked.
         self.base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
             days=random.randint(1_000, 20_000)
         )
@@ -173,8 +166,7 @@ class Steady:
             self.stats.last_problem = f"reservation {r.json().get('id')}: name {got!r}, expected {want!r}"
 
     async def create(self) -> None:
-        # Distinct 2-hour windows on one table: a 409 here is a real fault,
-        # not the expected result of a deliberate collision.
+        # Separate 2-hour windows on one table, so a 409 here is a real error.
         self.slot += 1
         start = self.base + timedelta(days=self.slot // 10, hours=(self.slot % 10) * 2)
         name = random.choice(NAMES)
@@ -214,8 +206,8 @@ class Steady:
         if not idle or roll < 0.5:
             await self.create()
             return
-        # One request per booking at a time, so a GET never races a PATCH
-        # on the same row and reports a stale name as corruption.
+        # One request per booking at a time, so a GET does not overlap a PATCH
+        # on the same booking and report an old name as wrong.
         rid = random.choice(idle[-500:])
         self.busy.add(rid)
         try:
@@ -291,17 +283,16 @@ async def steady(rps: int, duration: float | None) -> bool:
 
 
 async def concurrent(burst: int) -> bool:
-    """Fire `burst` simultaneous requests at ONE table and ONE time window.
+    """Send `burst` requests for the same table and time window at once.
 
-    This is the double-booking proof. Expected: exactly one 201, the rest
-    409, and exactly one row in the database for that slot.
+    Expected: one 201, the rest 409, and one row in the database.
     """
     async with httpx.AsyncClient(timeout=10) as client:
         headers = {"Authorization": f"Bearer {await login(client)}"}
         restaurant_id, table_id = await pick_table(client, headers)
 
-        # A random far-future hour, so a rerun races for a free slot instead
-        # of the one the previous run already booked.
+        # Random far-future hour, so a rerun does not race for a slot the last
+        # run already booked.
         start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
             days=random.randint(1_000, 20_000), hours=random.randint(0, 23)
         )

@@ -1,4 +1,4 @@
-"""Reproducible seed script.
+"""Seed data for both databases.
 
 Output:
     PostgreSQL  ~2,380 rows   (200 users, 40 restaurants, 240 tables,
@@ -6,20 +6,14 @@ Output:
     MongoDB     ~7,300 docs   (800 products, 1,500 reviews, 5,000 telemetry)
 
 Usage:
-    python scripts/seed.py            # seed (idempotent, skips if present)
-    python scripts/seed.py --reset    # wipe both databases first
+    python scripts/seed.py            # seed (skips data that is already there)
+    python scripts/seed.py --reset    # empty both databases first
     python scripts/seed.py --verify   # count only, no writes
     python scripts/seed.py --reset --reservations 20000   # CP2 demo volume
 
-REPRODUCIBILITY
-    Faker is seeded with a fixed value, so every teammate's database holds
-    byte-identical data and a bug is reproducible from a description alone.
-
-IDEMPOTENCE
-    Users get deterministic UUID5 ids derived from their email, and Mongo
-    documents get deterministic ObjectIds. Re-running upserts the same rows
-    rather than inserting duplicates, so the script is safe to run twice by
-    accident five minutes before a demo.
+Faker uses a fixed seed, so everyone in the team gets the same data. Users
+get UUIDs made from their email and MongoDB documents get fixed ObjectIds,
+so running the script twice does not create duplicates.
 """
 
 from __future__ import annotations
@@ -61,7 +55,7 @@ fake = Faker()
 Faker.seed(SEED)
 random.seed(SEED)
 
-# Fixed namespace so user UUIDs are stable across runs and machines.
+# Fixed namespace, so user UUIDs are the same on every machine.
 NS = uuid.UUID("6f1c2d3e-4a5b-6c7d-8e9f-a0b1c2d3e4f5")
 
 N_USERS = 200
@@ -87,27 +81,26 @@ EVENT_TYPES = [
     "reservation_attempt", "order_placed", "click",
 ]
 
-# One bcrypt hash computed once and reused for every seeded account.
-# Hashing 200 passwords individually costs ~30 seconds for no benefit,
-# because these are throwaway demo credentials. Real signups through the
-# API always get their own salt.
+# One bcrypt hash for all seeded accounts. Hashing 200 passwords takes
+# about 30 seconds and these are only demo accounts. Real signups get
+# their own salt.
 DEMO_PASSWORD = "TableFlow123!"
 DEMO_HASH = bcrypt.hashpw(DEMO_PASSWORD.encode(), bcrypt.gensalt()).decode()
 
 
 def stable_oid(kind: str, n: int) -> ObjectId:
-    """Deterministic ObjectId so re-running upserts instead of duplicating."""
+    """Fixed ObjectId, so running the seed again updates instead of duplicating."""
     digest = hashlib.sha1(f"{kind}:{n}:{SEED}".encode()).hexdigest()[:24]
     return ObjectId(digest)
 
 
-# --------------------------------------------------------------- PostgreSQL
+# PostgreSQL
 
 
 def seed_postgres(session: Session, n_reservations: int = N_RESERVATIONS) -> dict[str, int]:
     print("  PostgreSQL...")
 
-    # --- users ---
+    # users
     users: list[User] = []
     for i in range(N_USERS):
         email = f"user{i:04d}@tableflow.io"
@@ -118,7 +111,7 @@ def seed_postgres(session: Session, n_reservations: int = N_RESERVATIONS) -> dic
                 password_hash=DEMO_HASH,
                 full_name=fake.name(),
                 phone=fake.msisdn()[:10],
-                # First 5 admin, next 35 staff (one per restaurant), rest customers.
+                # First 5 admin, next 35 staff (one per restaurant), the rest customers.
                 role=(
                     UserRole.ADMIN if i < 5
                     else UserRole.STAFF if i < 45
@@ -132,7 +125,7 @@ def seed_postgres(session: Session, n_reservations: int = N_RESERVATIONS) -> dic
     staff = [u for u in users if u.role in (UserRole.STAFF, UserRole.ADMIN)]
     customers = [u for u in users if u.role == UserRole.CUSTOMER]
 
-    # --- restaurants ---
+    # restaurants
     restaurants: list[Restaurant] = []
     for i in range(N_RESTAURANTS):
         restaurants.append(
@@ -149,7 +142,7 @@ def seed_postgres(session: Session, n_reservations: int = N_RESERVATIONS) -> dic
     session.add_all(restaurants)
     session.flush()
 
-    # --- restaurant_tables ---
+    # restaurant_tables
     tables: list[RestaurantTable] = []
     for r in restaurants:
         for t in range(TABLES_PER_RESTAURANT):
@@ -167,19 +160,18 @@ def seed_postgres(session: Session, n_reservations: int = N_RESERVATIONS) -> dic
     for t in tables:
         tables_by_restaurant.setdefault(t.restaurant_id, []).append(t)
 
-    # --- reservations ---
-    # Slots are allocated from a set of discrete, non-overlapping windows per
-    # table. If this generator ever produced an overlap the insert would be
-    # REJECTED by the no_double_booking constraint - so a successful seed is
-    # itself a proof that the constraint is live and working.
+    # reservations
+    # Slots come from fixed time windows per table that do not overlap. If
+    # the seed ever made an overlap, the no_double_booking constraint would
+    # reject it.
     base = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     taken: set[tuple[int, int, int]] = set()  # (table_id, day, slot)
     reservations: list[Reservation] = []
     attempts = 0
 
-    # Seeded bookings are LEGACY data - guest_name only - so the CP2 backfill
-    # has real rows to migrate. Only on a contracted schema (0004, no
-    # guest_name) are the new columns written instead.
+    # Seeded bookings only have guest_name, so the CP2 backfill has rows to
+    # migrate. On a contracted schema (0004, no guest_name) the new columns
+    # are written instead.
     columns = {c["name"] for c in inspect(session.connection()).get_columns("reservations")}
 
     def guest_columns(name: str) -> dict[str, str]:
@@ -221,9 +213,9 @@ def seed_postgres(session: Session, n_reservations: int = N_RESERVATIONS) -> dic
     session.add_all(reservations)
     session.flush()
 
-    # --- orders + order_items ---
-    # product_id values must match the MongoDB documents seeded below, which
-    # is why both use the same deterministic stable_oid() generator.
+    # orders and order_items
+    # product_id must match the MongoDB products below, so both use
+    # stable_oid().
     orders: list[Order] = []
     item_count = 0
     for i in range(N_ORDERS):
@@ -269,17 +261,16 @@ def seed_postgres(session: Session, n_reservations: int = N_RESERVATIONS) -> dic
     }
 
 
-# ------------------------------------------------------------------ MongoDB
+# MongoDB
 
 
 def seed_mongo(db) -> dict[str, int]:
     print("  MongoDB...")
     now = datetime.now(UTC)
 
-    # --- products ---
-    # Attributes vary BY CATEGORY, so the collection genuinely holds
-    # documents of different shapes. That is the dynamic-attribute
-    # dynamic-attribute design, demonstrated rather than claimed.
+    # products
+    # Attributes depend on the category, so the products have different
+    # shapes.
     ops = []
     for i in range(N_PRODUCTS):
         category = random.choice(CATEGORIES)
@@ -329,7 +320,7 @@ def seed_mongo(db) -> dict[str, int]:
         )
     db["products"].bulk_write(ops, ordered=False)
 
-    # --- reviews ---
+    # reviews
     ops = []
     for i in range(N_REVIEWS):
         doc = {
@@ -349,8 +340,7 @@ def seed_mongo(db) -> dict[str, int]:
             },
             "created_at": now - timedelta(days=random.randint(0, 365)),
         }
-        # ~30% carry photos - an optional field, present on some documents
-        # and absent on others, which is the point of a document store.
+        # About 30% have photos; the field is optional.
         if random.random() < 0.3:
             doc["photos"] = [
                 {"url": f"/static/reviews/{i}_{n}.jpg", "caption": fake.word()}
@@ -359,8 +349,8 @@ def seed_mongo(db) -> dict[str, int]:
         ops.append(UpdateOne({"_id": stable_oid("review", i)}, {"$set": doc}, upsert=True))
     db["reviews"].bulk_write(ops, ordered=False)
 
-    # --- user_telemetry (HIGH VOLUME) ---
-    # Payload shape differs per event_type by design.
+    # user_telemetry
+    # The payload is different for each event_type.
     ops = []
     for i in range(N_TELEMETRY):
         event_type = random.choice(EVENT_TYPES)
@@ -392,8 +382,7 @@ def seed_mongo(db) -> dict[str, int]:
 
         doc = {
             "event_type": event_type,
-            # ~15% anonymous - a null user_id, which a NOT NULL relational
-            # column would have made awkward.
+            # About 15% are anonymous, with no user_id.
             "user_id": (
                 None if random.random() < 0.15
                 else str(uuid.uuid5(NS, f"user{random.randrange(45, N_USERS):04d}@tableflow.io"))
@@ -412,13 +401,13 @@ def seed_mongo(db) -> dict[str, int]:
     }
 
 
-# ----------------------------------------------------------------- plumbing
+# Helpers
 
 
 def reset_postgres(session: Session) -> None:
     print("  Truncating PostgreSQL...")
-    # RESTART IDENTITY so a reseeded database has the same IDs as a fresh
-    # one - otherwise the Mongo restaurant_id references drift out of range.
+    # RESTART IDENTITY so ids start from 1 again; the MongoDB documents
+    # refer to restaurant ids.
     session.execute(
         text(
             "TRUNCATE order_items, orders, reservations, restaurant_tables, "

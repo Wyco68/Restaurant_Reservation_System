@@ -1,7 +1,7 @@
-"""API acceptance tests.
+"""API tests.
 
-Covers every core endpoint and the full status-code surface:
-200, 201, 400, 401, 403, 404, 409, 422.
+Covers the main endpoints and the status codes 200, 201, 400, 401, 403,
+404, 409 and 422.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import pytest
 from httpx import AsyncClient
 
 
-# ----------------------------------------------------------------- health
+# Health
 
 
 async def test_health_reports_both_engines(client: AsyncClient):
@@ -25,7 +25,7 @@ async def test_health_reports_both_engines(client: AsyncClient):
     assert body["mongodb"] is True, "MongoDB unreachable - is docker compose up?"
 
 
-# ------------------------------------------------------- POST /users (201)
+# POST /users (201)
 
 
 async def test_create_user_returns_201(client: AsyncClient, unique_email: str):
@@ -37,7 +37,7 @@ async def test_create_user_returns_201(client: AsyncClient, unique_email: str):
     body = r.json()
     assert body["email"] == unique_email
     assert body["role"] == "customer"
-    # The hash must never leave the server.
+    # The hash must never be returned.
     assert "password" not in body
     assert "password_hash" not in body
 
@@ -54,7 +54,7 @@ async def test_short_password_rejected(client: AsyncClient, unique_email: str):
         "/api/v1/users",
         json={"email": unique_email, "password": "short", "full_name": "Ada"},
     )
-    assert r.status_code == 422  # Pydantic validation, before any handler runs
+    assert r.status_code == 422  # rejected by Pydantic validation
 
 
 async def test_malformed_email_rejected(client: AsyncClient):
@@ -65,7 +65,7 @@ async def test_malformed_email_rejected(client: AsyncClient):
     assert r.status_code == 422
 
 
-# -------------------------------------------------- GET /users/{id} (401)
+# GET /users/{id} (401)
 
 
 async def test_get_user_without_token_returns_401(client: AsyncClient):
@@ -119,7 +119,7 @@ async def test_update_profile_requires_auth(client: AsyncClient):
     assert r.status_code == 401
 
 
-# ---------------------------------------------------- GET /products (200)
+# GET /products (200)
 
 
 async def test_products_are_paginated(client: AsyncClient):
@@ -134,10 +134,7 @@ async def test_products_are_paginated(client: AsyncClient):
 
 
 async def test_product_list_is_projected(client: AsyncClient):
-    """List view must not carry description or attributes.
-
-    Asserted as a test rather than trusted as a convention.
-    """
+    """The list must not include description or attributes."""
     r = await client.get("/api/v1/products?limit=1")
     items = r.json()["items"]
     if items:
@@ -184,7 +181,7 @@ async def test_malformed_product_id_returns_400(client: AsyncClient):
     assert r.status_code == 400
 
 
-# ------------------------------------------------------ POST /orders (401)
+# POST /orders (401)
 
 
 async def test_create_order_requires_auth(client: AsyncClient):
@@ -218,11 +215,11 @@ async def test_order_with_empty_items_rejected(client: AsyncClient, auth_headers
     assert r.status_code == 422
 
 
-# ------------------------------------------------ GET /restaurants/{id}
+# GET /restaurants/{id}
 
 
 async def test_restaurant_detail_selects_only_what_it_returns(client: AsyncClient):
-    """Projection: one SELECT naming the response columns, not owner_id."""
+    """One SELECT with only the response columns (no owner_id)."""
     from sqlalchemy import event
 
     from app.db import postgres
@@ -242,16 +239,16 @@ async def test_restaurant_detail_selects_only_what_it_returns(client: AsyncClien
     assert "owner_id" not in query
 
 
-# ------------------------------------- POST /reservations - double booking
+# POST /reservations, double booking
 
 
 async def test_concurrent_booking_allows_exactly_one(
     client: AsyncClient, auth_headers: dict
 ):
-    """THE double-booking test.
+    """Double-booking test.
 
-    Fire 15 simultaneous requests for one table and one window. The EXCLUDE
-    constraint must let exactly one through.
+    15 requests for the same table and time at once. The EXCLUDE constraint
+    must let exactly one through.
     """
     r = await client.get("/api/v1/restaurants?limit=1")
     restaurants = r.json()["items"]
@@ -259,8 +256,8 @@ async def test_concurrent_booking_allows_exactly_one(
         pytest.skip("no seeded restaurants - run scripts/seed.py")
     restaurant_id = restaurants[0]["id"]
 
-    # A random far-future hour: a fixed one runs out of free tables after a
-    # few reruns in the same hour.
+    # Random far-future hour. With a fixed one, reruns in the same hour run
+    # out of free tables.
     start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(
         days=random.randint(2_000, 9_000), hours=random.randint(0, 23)
     )
@@ -273,8 +270,8 @@ async def test_concurrent_booking_allows_exactly_one(
             "party_size": 2,
         },
     )
-    # /availability lists every table with an `available` flag; a re-run in
-    # the same hour must skip the table the previous run already booked.
+    # /availability lists every table with an `available` flag, so we pick
+    # one that is still free.
     slots = [s for s in avail.json() if s["available"]]
     if not slots:
         pytest.skip("no tables available")
@@ -321,7 +318,7 @@ async def test_reservation_end_before_start_rejected(
     assert r.status_code == 422
 
 
-# --------------------------------------------- GET /reservations (own list)
+# GET /reservations (own list)
 
 
 async def test_list_reservations_requires_auth(client: AsyncClient):
@@ -373,7 +370,7 @@ async def test_list_reservations_returns_only_own(
 
     listed = (await client.get("/api/v1/reservations", headers=auth_headers)).json()
     assert [b["id"] for b in listed] == [created.json()["id"]]
-    # Joined in the same query, so the client need not fetch the restaurant.
+    # The restaurant name comes from the same query.
     assert listed[0]["restaurant_name"] == restaurants[0]["name"]
     assert listed[0]["version"] == created.json()["version"]
 
@@ -399,8 +396,9 @@ async def test_reservation_read_carries_etag(client: AsyncClient, auth_headers: 
 
 
 async def test_availability_matches_the_constraint(client: AsyncClient, auth_headers: dict, free_slot):
-    """Back-to-back is free, any overlap is taken - the '[)' rule of the
-    EXCLUDE constraint, which the availability query now reuses."""
+    """A booking right after another is allowed and any overlap is not, the
+    same '[)' rule as the EXCLUDE constraint.
+    """
     restaurant_id, table_id, start = await free_slot()
     end = start + timedelta(minutes=90)
     r = await client.post(
@@ -430,23 +428,22 @@ async def test_availability_matches_the_constraint(client: AsyncClient, auth_hea
     assert await free(start + timedelta(minutes=10), start + timedelta(minutes=20)) is False
 
 
-# ------------------------------------------------- migration helper logic
+# Migration helper
 
 
 def test_split_guest_name_handles_real_cases():
-    """Unit test for the one function both the API and the backfill share.
+    """Test for split_guest_name, which the API and the backfill both use.
 
-    If these two ever disagree about how a name splits, the backfill
-    silently corrupts data - so the shared function gets its own test.
+    If they split names differently, the backfill would save wrong data.
     """
     from app.services.reservations import split_guest_name
 
     assert split_guest_name("Ada Lovelace") == ("Ada", "Lovelace")
-    # Split on the FIRST space only - multi-word surnames stay intact.
+    # Split at the first space only, so longer surnames stay together.
     assert split_guest_name("Mary Jane Watson") == ("Mary", "Jane Watson")
-    # Mononym: keep it as the first name rather than dropping it.
+    # A single name is kept as the first name.
     assert split_guest_name("Prince") == ("Prince", "")
-    # Whitespace is normalized, not preserved.
+    # Extra spaces are removed.
     assert split_guest_name("  Ada   Lovelace  ") == ("Ada", "Lovelace")
     assert split_guest_name("") == ("", "")
     assert split_guest_name("   ") == ("", "")

@@ -1,9 +1,8 @@
-"""MongoDB connection setup and collection accessors (Motor, async).
+"""MongoDB connection and collections (Motor, async).
 
-Three collections:
-    products        - menu items with dynamic attributes
-    reviews         - customer reviews, semi-structured
-    user_telemetry  - behavioural events, HIGH VOLUME
+    products        menu items with flexible attributes
+    reviews         customer reviews
+    user_telemetry  user events, many writes
 """
 
 import asyncio
@@ -16,9 +15,8 @@ from motor.motor_asyncio import (
 
 from app.config import settings
 
-# One client per event loop. A module-level client binds to whatever loop is
-# running at import time, so anything running on a different loop later - a
-# test, a reload, a restarted worker - fails with "Event loop is closed".
+# One client per event loop. A single global client breaks when code runs
+# on another loop (tests, reloads) with "Event loop is closed".
 _clients: dict[int, AsyncIOMotorClient] = {}
 
 
@@ -41,9 +39,8 @@ def get_db() -> AsyncIOMotorDatabase:
     return get_client()[settings.mongo_db]
 
 
-# --- Collection accessors -------------------------------------------------
-# Named functions rather than module-level globals so the database handle is
-# resolved lazily. That keeps tests able to point at a different database.
+# Collections are returned by functions so tests can point them at
+# another database.
 
 
 def products() -> AsyncIOMotorCollection:
@@ -58,23 +55,20 @@ def user_telemetry() -> AsyncIOMotorCollection:
     return get_db()["user_telemetry"]
 
 
-# --- Index creation -------------------------------------------------------
+# Indexes
 
 
 async def ensure_indexes() -> None:
-    """Create every index the application relies on. Idempotent.
+    """Create all the indexes the app uses. Safe to run more than once.
 
-    Called on startup so a fresh clone is correctly indexed without a manual
-    step. Index definitions live here, next to the collections, rather than
-    being scattered through the query code.
+    Called on startup, so a new setup is indexed without a manual step.
     """
     await products().create_index([("restaurant_id", 1), ("category", 1)])
-    # Equality fields first, then the sort field (ESR). GET /products filters
-    # on restaurant_id and is_available and sorts by name; with name in the
-    # index the documents come back already ordered - no in-memory SORT.
+    # Filter fields first, then the sort field, so GET /products gets the
+    # documents already sorted by name and MongoDB does not sort in memory.
     await products().create_index([("restaurant_id", 1), ("is_available", 1), ("name", 1)])
-    # The catalogue without a restaurant filter: was a COLLSCAN of every
-    # product plus a SORT, now reads only the page it returns.
+    # For the catalogue without a restaurant filter. Without this index
+    # MongoDB scanned every product.
     await products().create_index([("is_available", 1), ("name", 1)])
     await products().create_index([("name", "text")])
     await products().create_index([("price", 1)])
@@ -85,7 +79,7 @@ async def ensure_indexes() -> None:
     await reviews().create_index([("rating", 1)])
     await reviews().create_index([("tags", 1)])
 
-    # High-volume collection: these indexes are what keep analytics fast.
+    # Telemetry gets many writes; these indexes are for reading it by time.
     await user_telemetry().create_index([("occurred_at", -1)])
     await user_telemetry().create_index([("event_type", 1), ("occurred_at", -1)])
     await user_telemetry().create_index([("user_id", 1), ("occurred_at", -1)], sparse=True)

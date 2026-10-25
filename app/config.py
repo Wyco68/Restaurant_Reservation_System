@@ -1,7 +1,7 @@
-"""Application configuration.
+"""App settings.
 
-Every value comes from the environment or .env. No secret is ever written
-into source.
+All values come from environment variables or .env, so no secrets are in
+the code.
 """
 
 from functools import lru_cache
@@ -16,47 +16,44 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    # --- PostgreSQL ---
+    # PostgreSQL
     postgres_db: str = "tableflow"
     postgres_user: str = "dev_user"
-    # No default. A missing POSTGRES_PASSWORD must fail at startup rather
-    # than silently attempting a blank-password connection.
+    # No default, so a missing password fails at startup.
     postgres_password: str = Field(min_length=1)
     postgres_host: str = "localhost"
     postgres_port: int = 5432
 
-    # --- MongoDB ---
+    # MongoDB
     mongo_db: str = "tableflow"
     mongo_user: str = "dev_user"
     mongo_password: str = Field(min_length=1)
     mongo_host: str = "localhost"
     mongo_port: int = 27017
 
-    # --- Auth ---
-    # No default, and a length floor: a short or empty HMAC key makes every
-    # token in the system forgeable.
+    # Auth
+    # No default and at least 32 characters, because a short key makes the
+    # tokens easy to forge.
     jwt_secret: str = Field(min_length=32)
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
 
-    # --- Application ---
+    # App
     app_env: str = "development"
     log_level: str = "INFO"
 
-    # --- guest_name migration ---
-    # Phase a fresh process starts in. It is changed at runtime through
-    # PUT /api/v1/admin/migration, and lowered at startup if the schema
-    # cannot serve it. See app/migration.py.
+    # guest_name migration: the phase a new process starts in. It is changed
+    # with PUT /api/v1/admin/migration and lowered at startup if the schema
+    # does not support it (see app/migration.py).
     name_migration_phase: Literal["legacy", "dual_write", "read_new", "new_only"] = "legacy"
 
     @field_validator("jwt_secret")
     @classmethod
     def reject_placeholder_secret(cls, v: str) -> str:
-        """Refuse to start on a secret that was never changed.
+        """Stop at startup if JWT_SECRET is still the placeholder.
 
-        The .env.example ships a placeholder so a fresh clone runs. Shipping
-        that same placeholder anywhere real would mean anyone holding the
-        repository can mint valid tokens.
+        .env.example has a placeholder so a new clone can start. If it were used
+        for real, anyone with the repository could create valid tokens.
         """
         if "change_me" in v.lower() or "dev_only" in v.lower():
             raise ValueError(

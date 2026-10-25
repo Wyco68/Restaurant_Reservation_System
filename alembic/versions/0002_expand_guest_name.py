@@ -1,26 +1,16 @@
-"""Step 1 of 5 - EXPAND: add first_name / last_name alongside guest_name.
+"""Step 1 of 5, Expand: add first_name and last_name next to guest_name.
 
-The Expand-and-Contract pattern:
+    1. Expand         this migration
+    2. Dual write     phase dual_write (app/migration.py)
+    3. Backfill       scripts/backfill_names.py
+    4. Switch read    phase read_new
+    5. Contract       revision 0003, phase new_only, revision 0004
 
-    1. EXPAND      <- THIS MIGRATION
-    2. DUAL WRITE     phase dual_write (app/migration.py)
-    3. BACKFILL       scripts/backfill_names.py
-    4. SWITCH READ    phase read_new
-    5. CONTRACT       revision 0003, phase new_only, revision 0004
-
-WHY THIS IS SAFE UNDER LIVE TRAFFIC
------------------------------------
-Both columns are added NULLABLE with NO DEFAULT. Since PostgreSQL 11 that is
-a catalog-only change: no table rewrite, no data pages touched, and the
-ACCESS EXCLUSIVE lock is held for microseconds rather than for the duration
-of a full-table rewrite.
-
-Adding `NOT NULL DEFAULT ''` instead would rewrite every row while holding
-that lock, blocking all concurrent reads AND writes - exactly the downtime
-this exercise exists to avoid.
-
-Run scripts/traffic.py against POST /api/v1/reservations while applying
-this and observe zero failed requests.
+Both columns are nullable with no default. In PostgreSQL 11+ this only
+changes the catalog, so the table is not rewritten and the lock is very
+short. With NOT NULL DEFAULT '' every row would be rewritten while reads and
+writes wait. Run scripts/traffic.py during this step to check that no
+request fails.
 
 Revision ID: 0002
 Revises: 0001
@@ -39,20 +29,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Nullable, no default, no server_default. Metadata-only.
+    # Nullable and no default, so only the catalog changes.
     op.add_column("reservations", sa.Column("first_name", sa.String(60), nullable=True))
     op.add_column("reservations", sa.Column("last_name", sa.String(60), nullable=True))
 
-    # Partial index supporting the batched backfill. It only covers rows
-    # still awaiting migration, so it starts small, shrinks to empty as the
-    # backfill progresses, and makes each batch's lookup an index scan
-    # rather than a sequential scan of the whole table.
+    # Partial index for the backfill. It only has the rows that still need
+    # migrating, so it gets smaller as the backfill runs.
     #
-    # CONCURRENTLY would avoid taking a write lock, but it cannot run inside
-    # a transaction and Alembic wraps migrations in one. At this table size
-    # the plain CREATE INDEX is instant. For a genuinely large table the
-    # index would be created outside Alembic with CONCURRENTLY - noted here
-    # because it is the honest answer if asked in the audit.
+    # CREATE INDEX CONCURRENTLY would avoid the write lock, but it cannot run
+    # inside Alembic's transaction. For our table size the normal CREATE
+    # INDEX takes no noticeable time.
     op.create_index(
         "idx_reservations_backfill",
         "reservations",
@@ -62,9 +48,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Fully reversible. Nothing has been dropped, so rolling back loses only
-    # data written exclusively to the new columns - and dual-write guarantees
-    # guest_name still holds every value.
+    # Can be undone. Because of dual write, guest_name still has every name.
     op.drop_index("idx_reservations_backfill", table_name="reservations")
     op.drop_column("reservations", "last_name")
     op.drop_column("reservations", "first_name")

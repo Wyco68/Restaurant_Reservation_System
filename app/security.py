@@ -1,7 +1,6 @@
-"""Authentication and authorization.
+"""Login, tokens and roles.
 
-Passwords are hashed with bcrypt. Plaintext passwords are never stored,
-never logged, and never returned in a response.
+Passwords are stored as bcrypt hashes and are never logged or returned.
 """
 
 from __future__ import annotations
@@ -26,10 +25,9 @@ from app.models.user import User, UserRole
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-# --- Password hashing -----------------------------------------------------
-# bcrypt is deliberately slow (~0.2 s per call at the default cost 12). Run on
-# the event loop, one login freezes every other request for that long, so
-# both calls go to a worker thread; bcrypt releases the GIL while it hashes.
+# Password hashing. bcrypt takes about 0.2 s per call. We run it in a
+# worker thread, because on the event loop it would block every other
+# request during that time.
 
 
 def _hash(plain: str) -> str:
@@ -40,7 +38,7 @@ def _check(plain: str, hashed: str) -> bool:
     try:
         return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
     except (ValueError, TypeError):
-        # Malformed hash in the database: fail closed, never fail open.
+        # A broken hash in the database means the login fails.
         return False
 
 
@@ -52,7 +50,7 @@ async def verify_password(plain: str, hashed: str) -> bool:
     return await run_in_threadpool(_check, plain, hashed)
 
 
-# --- JWT ------------------------------------------------------------------
+# JWT
 
 
 def create_access_token(user_id: uuid.UUID, role: str) -> str:
@@ -70,11 +68,10 @@ def decode_access_token(token: str) -> dict:
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
 
 
-# --- FastAPI dependencies -------------------------------------------------
+# FastAPI dependencies
 
-# PROJECTION: what a request needs to know about its caller. password_hash is
-# left on disk - only /auth/login ever reads it - and raiseload makes any
-# code that touches it fail loudly instead of quietly querying for it.
+# Columns loaded for the current user. password_hash is left out (only
+# /auth/login needs it), and raiseload makes any access to it an error.
 PROFILE = load_only(
     User.id, User.email, User.full_name, User.phone, User.role, User.is_active,
     User.created_at, raiseload=True,
@@ -91,11 +88,11 @@ async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> User:
-    """Resolve the bearer token to a live user row.
+    """Find the user for the bearer token.
 
-    Raises 401 for a missing, malformed, expired or orphaned token. The user
-    is re-read from the database on every request so that deactivating an
-    account takes effect immediately instead of when the token expires.
+    Returns 401 if the token is missing, invalid, expired or the user no
+    longer exists. The user is read from the database on every request, so a
+    disabled account stops working right away.
     """
     if credentials is None:
         raise _UNAUTHORIZED
@@ -116,10 +113,9 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 def require_role(*allowed: UserRole):
-    """Dependency factory for role-gated endpoints.
+    """Dependency for endpoints that need a certain role.
 
-    Returns 403 rather than 401 when the caller is authenticated but lacks
-    the role. Conflating the two hides real bugs during debugging.
+    Returns 403 (not 401) when the user is logged in but has the wrong role.
     """
 
     async def _guard(user: CurrentUser) -> User:

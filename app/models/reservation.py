@@ -1,9 +1,8 @@
-"""reservations - the transactional heart of the system.
+"""Reservations table.
 
-This table carries both hard problems:
-  * zero-downtime migration: guest_name -> first_name / last_name
-  * concurrency control:     the no_double_booking EXCLUDE constraint on
-                             INSERT, the xmin version check on UPDATE
+Used by the CP2 name migration (guest_name to first_name / last_name) and by
+the concurrency work: the no_double_booking constraint for new bookings and
+the xmin version check for edits.
 """
 
 from __future__ import annotations
@@ -32,11 +31,10 @@ from app.models.base import Base, TimestampMixin
 
 
 class Xid(UserDefinedType):
-    """PostgreSQL's 32-bit transaction id type.
+    """PostgreSQL's xid type, used for the xmin version column.
 
-    Declared so the version check binds its parameter as xid. Mapped as
-    String it would be sent as VARCHAR, and PostgreSQL has no xid = varchar
-    operator.
+    With a plain String the version is sent as VARCHAR, and PostgreSQL
+    cannot compare xid with varchar.
     """
 
     cache_ok = True
@@ -67,22 +65,15 @@ class Reservation(Base, TimestampMixin):
         nullable=False,
     )
 
-    # --- Migration columns -----------------------------------------------
-    # guest_name is the LEGACY field: made nullable by 0003, dropped by 0004.
-    # first_name / last_name are added by 0002 (Expand). Nullable with no
-    # default ON PURPOSE: in PostgreSQL 11+ that is a metadata-only change,
-    # so there is no table rewrite and no long ACCESS EXCLUSIVE lock. A
-    # NOT NULL DEFAULT would rewrite the table and defeat the exercise.
+    # Name columns for the migration. guest_name is the old column (nullable
+    # in 0003, dropped in 0004). first_name and last_name are added in 0002
+    # as nullable with no default, so adding them does not rewrite the table.
     #
-    # All three exist in the database only for part of the migration, so the
-    # mapping must never name one the schema lacks:
-    #   deferred          SELECT reservation omits them; a query loads the
-    #                     ones the phase reads (services/reservations.py).
-    #   raiseload         touching one that was not loaded raises instead of
-    #                     lazy-loading a column that may not exist.
-    #   FetchedValue()    tells the ORM to leave an unset column out of the
-    #                     INSERT rather than send NULL for it. No DDL default
-    #                     is created; migrations own the DDL.
+    # Each column only exists during part of the migration, so:
+    #   deferred        a normal SELECT leaves them out; the service loads
+    #                   the ones the current phase reads
+    #   raiseload       reading one that was not loaded raises an error
+    #   FetchedValue()  an unset column is left out of the INSERT
     guest_name: Mapped[str | None] = mapped_column(
         String(120), server_default=FetchedValue(),
         deferred=True, deferred_raiseload=True,
@@ -110,18 +101,12 @@ class Reservation(Base, TimestampMixin):
         server_default=ReservationStatus.PENDING.value,
     )
 
-    # --- Optimistic concurrency token --------------------------------------
-    # xmin is the system column holding the id of the transaction that wrote
-    # this row version. PostgreSQL changes it on EVERY update - from the API,
-    # the backfill script or psql - so no writer can forget to bump it. That
-    # is the same reason double-booking is an EXCLUDE constraint rather than
-    # application code. No migration: every table already has xmin, so this
-    # works on every schema from 0001 to 0004.
-    #
-    # As version_id_col, every ORM UPDATE becomes
-    #     UPDATE reservations SET ... WHERE id = :id AND xmin = :version_seen
-    # and matching 0 rows raises StaleDataError - another transaction changed
-    # the row after this one read it. The API turns that into 409.
+    # Version for optimistic locking. xmin is a PostgreSQL system column that
+    # changes on every update of the row, so we do not need our own counter
+    # or a migration. With version_id_col every ORM update becomes
+    #     UPDATE reservations SET ... WHERE id = :id AND xmin = :version
+    # If another transaction changed the row first, 0 rows match and
+    # SQLAlchemy raises StaleDataError (the API returns 409).
     version: Mapped[str] = mapped_column(
         "xmin", Xid, system=True, server_default=FetchedValue()
     )
@@ -129,12 +114,11 @@ class Reservation(Base, TimestampMixin):
     user: Mapped["User"] = relationship(back_populates="reservations")  # noqa: F821
 
     __mapper_args__ = {
-        # Without this, SQLAlchemy 2.x adds every FetchedValue column to the
-        # INSERT's RETURNING clause - naming the very columns that may not
-        # exist. The version column is still returned: the ORM asks for it.
+        # Otherwise SQLAlchemy would return the name columns after INSERT,
+        # and they may not exist yet.
         "eager_defaults": False,
         "version_id_col": version,
-        # PostgreSQL generates the next value, not Python.
+        # PostgreSQL sets the new xmin itself.
         "version_id_generator": False,
     }
 
@@ -144,7 +128,5 @@ class Reservation(Base, TimestampMixin):
         Index("idx_reservations_user", "user_id", text("starts_at DESC")),
         Index("idx_reservations_restaurant_time", "restaurant_id", "starts_at"),
     )
-    # The no_double_booking EXCLUDE constraint is created in migration 0001 via
-    # op.execute(). SQLAlchemy has ExcludeConstraint, but writing it as explicit
-    # DDL in the migration keeps the single most important line of the schema
-    # readable to anyone auditing it.
+    # The no_double_booking EXCLUDE constraint is created in migration 0001
+    # with plain SQL, which is easier to read than ExcludeConstraint.

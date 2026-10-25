@@ -1,11 +1,9 @@
-"""Orders: status changes under a row lock, and the one-query order list.
+"""Orders: status changes with a row lock, and the order list.
 
-Requests that merely run at the same time rarely overlap: each transaction
-lasts about a millisecond. So the race tests hold the order's row lock
-themselves, fire every request, and let go once all of them are parked
-behind it. Every request has then read before any could write - the worst
-case, on every run. Remove with_for_update() from advance_status() and these
-tests fail.
+Our transactions take about 1 ms, so requests sent together often do not
+overlap. The race tests lock the order's row themselves, send all the
+requests, and release the lock once they are all waiting. Without
+with_for_update() in advance_status() these tests fail.
 """
 
 from __future__ import annotations
@@ -34,14 +32,14 @@ async def staff(db) -> dict[str, str]:
     if staff_id is None:
         pytest.skip("no seeded staff - run scripts/seed.py")
     yield {"Authorization": f"Bearer {create_access_token(staff_id, 'staff')}"}
-    # The races below outnumber the pool's connections; give the next test
-    # a pool that is not tied to this test's event loop.
+    # The races use more requests than the pool has connections, so make a
+    # new pool for the next test.
     await postgres.engine.dispose()
 
 
 @pytest_asyncio.fixture
 async def place_order(client: AsyncClient, auth_headers: dict):
-    """Factory: place an order for the test user at a seeded restaurant."""
+    """Returns a function that places an order for the test user."""
     menu = (await client.get("/api/v1/products?limit=100")).json()["items"]
     if not menu:
         pytest.skip("no seeded products - run scripts/seed.py")
@@ -65,19 +63,21 @@ async def move(client: AsyncClient, headers: dict, order_id: int, to: str) -> in
 
 
 async def all_at_once(db, order_id: int, requests: list[Awaitable[int]]) -> list[int]:
-    """Run the requests while this test holds the order's row lock, then
-    release it so they all contend at the same instant."""
+    """Send the requests while this test holds the order's row lock, then
+    release it so they all compete at the same moment.
+    """
     with db.connect() as gate:
         gate.execute(text("SELECT 1 FROM orders WHERE id = :id FOR UPDATE"), {"id": order_id})
         tasks = [asyncio.ensure_future(r) for r in requests]
-        await asyncio.sleep(1)       # every request is now waiting on the lock
+        await asyncio.sleep(1)       # by now every request waits on the lock
         gate.rollback()
     return await asyncio.gather(*tasks)
 
 
 async def test_twenty_identical_changes_exactly_one_applies(client, staff, place_order, db):
-    """Without the lock all twenty read 'placed', all pass the check, all
-    write - twenty "start preparing" for one order."""
+    """Without the lock all twenty would read 'placed', pass the check and
+    save, so the order would be started twenty times.
+    """
     order = await place_order()
 
     codes = Counter(await all_at_once(db, order["id"], [
@@ -90,8 +90,9 @@ async def test_twenty_identical_changes_exactly_one_applies(client, staff, place
 
 
 async def test_racing_ready_and_cancel_one_wins(client, staff, place_order, db):
-    """The motivating race: half the staff press ready, half press cancel.
-    Whichever commits first, the other transition is no longer legal."""
+    """Half the staff press ready and half press cancel. Whichever commits
+    first, the other change is no longer allowed.
+    """
     order = await place_order()
     assert await move(client, staff, order["id"], "preparing") == 200
 

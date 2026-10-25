@@ -1,11 +1,10 @@
 """Pytest fixtures.
 
-These are integration tests: they run against the real Docker databases.
-A mocked database proves nothing about a dual-database design, and the
-things most likely to break here - the EXCLUDE constraint, the Mongo
-projection, the dual-DB order flow - are exactly the things a mock hides.
+The tests run against the real databases in Docker. A mock could not show
+whether the EXCLUDE constraint, the MongoDB projection or the order flow
+across both databases really work.
 
-Prerequisites:
+Before running:
     docker compose up -d
     alembic upgrade head
     python scripts/seed.py
@@ -23,9 +22,8 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-# psycopg's async mode cannot run on Windows' default ProactorEventLoop.
-# Uvicorn selects a compatible policy itself; pytest does not, so set it
-# here before any loop is created.
+# psycopg async does not work with the default event loop on Windows.
+# Uvicorn changes it itself but pytest does not, so we set it here.
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -39,11 +37,11 @@ from app.main import app  # noqa: E402
 
 @pytest_asyncio.fixture(autouse=True)
 async def migration_phase():
-    """Run every test in the phase the app would start in, then restore it.
+    """Run each test in the phase the app would start in, then restore it.
 
-    ASGITransport does not run the app's lifespan, so the startup check that
-    fits the phase to the schema has to happen here - otherwise the suite
-    would fail against a schema that is already contracted.
+    ASGITransport does not run the app's startup code, so we fit the phase
+    to the schema here. Otherwise the tests would fail on a contracted
+    schema.
     """
     before = migration.current()
     await migration.reconcile_with_schema(postgres.engine)
@@ -53,7 +51,7 @@ async def migration_phase():
 
 @pytest.fixture(scope="session")
 def db():
-    """Synchronous engine for asserting on columns the API does not expose."""
+    """Sync engine for checking columns the API does not return."""
     engine = create_engine(settings.postgres_sync_dsn)
     yield engine
     engine.dispose()
@@ -61,7 +59,7 @@ def db():
 
 @pytest_asyncio.fixture
 async def free_slot(client: AsyncClient):
-    """Return a factory for (restaurant_id, table_id, starts_at) nobody holds."""
+    """Returns a function that finds a free (restaurant_id, table_id, starts_at)."""
     r = await client.get("/api/v1/restaurants?limit=1")
     items = r.json()["items"]
     if not items:
@@ -98,13 +96,13 @@ async def client() -> AsyncClient:
 
 @pytest.fixture
 def unique_email() -> str:
-    """A fresh email per test, so reruns never collide on the UNIQUE index."""
+    """A new email for each test, so reruns do not hit the unique index."""
     return f"test_{uuid.uuid4().hex[:12]}@tableflow.io"
 
 
 @pytest_asyncio.fixture
 async def auth_headers(client: AsyncClient, unique_email: str) -> dict[str, str]:
-    """Register a throwaway user and return its bearer header."""
+    """Register a test user and return its bearer header."""
     password = "TestPassword123!"
     await client.post(
         "/api/v1/users",

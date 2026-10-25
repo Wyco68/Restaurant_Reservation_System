@@ -1,7 +1,7 @@
-"""scripts/backfill_names.py against real rows.
+"""Tests for scripts/backfill_names.py on real rows.
 
-Legacy rows are inserted directly (guest_name only), backfilled, checked,
-and deleted again, so the shared database is left as it was found.
+Old-style rows (guest_name only) are inserted, backfilled, checked and
+deleted again, so the database is left as it was.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ spec.loader.exec_module(backfill)
 
 @pytest.fixture
 def legacy_rows(db, free_slot):
-    """Factory inserting guest_name-only rows the way pre-Expand code wrote them."""
+    """Returns a function that inserts rows with only guest_name, like before 0002."""
     columns = {c["name"] for c in inspect(db).get_columns("reservations")}
     if not {"guest_name", "first_name"} <= columns:
         pytest.skip("needs both guest_name and first_name (between 0002 and 0004)")
@@ -84,7 +84,7 @@ async def test_pass_fills_legacy_rows_in_batches(
 
 
 async def test_rows_already_filled_are_not_overwritten(client: AsyncClient, db, legacy_rows):
-    """A row dual-write filled first keeps its value - the UPDATE re-checks."""
+    """A row already filled by dual write keeps its value."""
     [rid] = await legacy_rows("Grace Hopper")
     with db.begin() as conn:
         conn.execute(t.update().where(t.c.id == rid).values(first_name="Fresh", last_name="Value"))

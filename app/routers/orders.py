@@ -1,11 +1,11 @@
-"""Orders router - the dual-database endpoint.
+"""Orders.
 
     POST  /api/v1/orders              -> 201, PostgreSQL + MongoDB
-    GET   /api/v1/orders              -> 200, the caller's orders, one query
+    GET   /api/v1/orders              -> 200, the caller's orders
     GET   /api/v1/orders/{id}         -> 200
-    PATCH /api/v1/orders/{id}/status  -> 200, or 409 for an illegal transition
+    PATCH /api/v1/orders/{id}/status  -> 200, or 409 if not allowed
 
-The flow and its failure semantics live in app/services/orders.py.
+The logic is in app/services/orders.py.
 """
 
 from __future__ import annotations
@@ -42,9 +42,8 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 async def create_order(payload: OrderCreate, session: Session, current: CurrentUser) -> Order:
     """Create an order.
 
-    Reads product pricing from MongoDB, writes the order to PostgreSQL in a
-    single transaction, then records a telemetry event in MongoDB. Prices
-    are never taken from the request body.
+    Prices are read from MongoDB, the order is saved in PostgreSQL, and then
+    a telemetry event is written to MongoDB. The request cannot set prices.
     """
     return await order_service.create_order(session, current, payload)
 
@@ -59,7 +58,7 @@ async def list_my_orders(
     current: CurrentUser,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[OrderSummary]:
-    """The caller's orders, newest first. One SQL query whatever the count."""
+    """The caller's orders, newest first, in one SQL query."""
     rows = await session.execute(order_service.select_my_orders(current.id, limit))
     return [OrderSummary.model_validate(r) for r in rows]
 
@@ -83,9 +82,9 @@ async def get_order(order_id: int, session: Session, current: CurrentUser) -> Or
 async def update_status(
     order_id: int, payload: OrderStatusUpdate, session: Session
 ) -> Order:
-    """Advance an order through the kitchen. Staff/admin only.
+    """Change an order's status. Staff and admin only.
 
-    placed -> preparing -> ready -> completed; placed or preparing ->
-    cancelled. Concurrent changes are serialized by a row lock.
+    placed -> preparing -> ready -> completed, and placed or preparing ->
+    cancelled. A row lock handles two staff changing it at once.
     """
     return await order_service.advance_status(session, order_id, payload.status)

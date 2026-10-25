@@ -1,8 +1,8 @@
-"""Users router.
+"""Users.
 
-    POST  /api/v1/users        -> 201, PostgreSQL
-    GET   /api/v1/users/{id}   -> 200, PostgreSQL
-    PATCH /api/v1/users/me     -> 200, PostgreSQL
+POST  /api/v1/users        -> 201
+GET   /api/v1/users/{id}   -> 200
+PATCH /api/v1/users/me     -> 200
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ Session = Annotated[AsyncSession, Depends(get_session)]
     },
 )
 async def create_user(payload: UserCreate, session: Session) -> User:
-    """Register an account. Public - this is the one endpoint before auth."""
+    """Register an account. This is the only endpoint that needs no login."""
     user = User(
         email=payload.email,
         password_hash=await hash_password(payload.password),
@@ -48,9 +48,8 @@ async def create_user(payload: UserCreate, session: Session) -> User:
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        # The UNIQUE index raises this. Checking for the email first and
-        # then inserting would race: two concurrent signups could both pass
-        # the check. Let the database be the arbiter.
+        # The unique index on email raises this. Checking first and then
+        # inserting would fail when two signups arrive together.
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered") from exc
 
     await session.refresh(user)
@@ -67,11 +66,10 @@ async def create_user(payload: UserCreate, session: Session) -> User:
     },
 )
 async def get_user(user_id: uuid.UUID, session: Session, current: CurrentUser) -> User:
-    """Fetch account details.
+    """Get a user's account details.
 
-    Authenticated. A customer may read only their own record; staff and
-    admin may read any. Without this check the endpoint is a user-data
-    enumeration API.
+    Customers can only read their own account. Staff and admin can read
+    any account.
     """
     if current.role == UserRole.CUSTOMER and current.id != user_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Cannot read another user's account")
@@ -84,7 +82,7 @@ async def get_user(user_id: uuid.UUID, session: Session, current: CurrentUser) -
 
 @router.get("/me/profile", response_model=UserOut)
 async def get_own_profile(current: CurrentUser) -> User:
-    """Convenience endpoint so the frontend need not know its own UUID."""
+    """The caller's own profile, so the frontend does not need its own id."""
     return current
 
 
@@ -98,11 +96,10 @@ async def get_own_profile(current: CurrentUser) -> User:
     },
 )
 async def update_own_profile(payload: UserUpdate, session: Session, current: CurrentUser) -> User:
-    """Edit the caller's own name, email or phone.
+    """Edit the caller's name, email or phone.
 
-    Only fields present in the request body change. `full_name` and `email`
-    cannot be cleared - they are NOT NULL - so an explicit null for either is
-    ignored rather than turned into a 500.
+    Only the fields in the request are changed. full_name and email cannot
+    be empty, so a null for them is ignored.
     """
     changes = payload.model_dump(exclude_unset=True)
     for field in ("email", "full_name"):
@@ -114,7 +111,7 @@ async def update_own_profile(payload: UserUpdate, session: Session, current: Cur
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        # Same arbiter as signup: the UNIQUE (CITEXT) index on email.
+        # Same unique index on email as for signup.
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered") from exc
 
     await session.refresh(current)
