@@ -99,26 +99,26 @@ python scripts/seed.py --verify     # counts unchanged
 
 ## Concurrency
 
-Three shared resources, three different races, three mechanisms. Each is the cheapest one that is still correct for its race.
+There are three kinds of shared data that two users can change at the same time, and we handle each one differently.
 
-| Resource | Race | Mechanism | Loser gets |
+| Resource | Race | Mechanism | The loser gets |
 |---|---|---|---|
-| A table for a time window | Two bookings both see it free | `EXCLUDE` constraint | `409` |
-| An existing reservation | Two edits from the same read | Optimistic: `xmin` version, `If-Match` | `412` or `409` |
-| An order's status | Two staff move it at once | Pessimistic: `SELECT ... FOR UPDATE` | `409` |
+| A table for a time window | Two bookings both see the table as free | `EXCLUDE` constraint | `409` |
+| An existing reservation | Two edits based on the same read | Optimistic locking with `xmin` and `If-Match` | `412` or `409` |
+| An order's status | Two staff change it at once | Pessimistic locking with `SELECT ... FOR UPDATE` | `409` |
 
-Proof for all three: [PERFORMANCE.md](PERFORMANCE.md#concurrency).
+The tests and results are in [PERFORMANCE.md](PERFORMANCE.md#2-concurrency-control).
 
 ### Bookings: exclusion constraint
 
-One table, one 19:00 slot, twenty simultaneous requests. Exactly one must succeed. The naive implementation is a check-then-act race:
+If twenty people book the same table for 19:00 at the same moment, only one booking may succeed. Checking in Python first and then inserting does not work, because two requests can both pass the check before either one inserts:
 
 ```python
 if not has_conflict(table_id, start, end):   # T1 and T2 both read "free"
     insert_reservation(...)                  # T1 and T2 both insert
 ```
 
-No amount of care in application code closes this, because the window is *between two statements*.
+We let PostgreSQL enforce it instead:
 
 ```sql
 EXCLUDE USING gist (
@@ -127,41 +127,34 @@ EXCLUDE USING gist (
 ) WHERE (status <> 'cancelled')
 ```
 
-Overlap becomes structurally impossible, whatever the application does. Every write path is covered, including ones not yet written. The GiST index also answers availability: the query is written with the same expression and predicate so the planner can use it.
+With this constraint the database itself refuses an overlapping booking, so every code path that inserts reservations is covered, including future ones. The availability query uses the same range expression so it can use the constraint's GiST index.
 
-Rejected as the defence, `SELECT ... FOR UPDATE` on the table row, then check in Python: correct, but correctness then lives in every code path that inserts, and forgetting the lock anywhere reintroduces double-booking. Application validation alone is the race above.
+We decided against using only `SELECT ... FOR UPDATE` and a check in Python, because then every place that inserts a booking has to remember the lock.
 
-**The constraint can deadlock; a row lock prevents it.** Two concurrent `INSERT`s for overlapping windows each find the other's uncommitted row while the constraint is checked, and each waits for the other's transaction. PostgreSQL detects the cycle after `deadlock_timeout` (1 s) and aborts one with `40P01`, which surfaced as a `500`. A unique index avoids this internally; an exclusion constraint does not. Retrying the aborted insert (#19) lowered the odds but did not remove them: on a cold database the retries ran out.
+During CP3 testing we found that the constraint can deadlock. When two inserts for overlapping times run together, each one waits for the other to finish while PostgreSQL checks the constraint. After one second PostgreSQL cancels one of them, and our API returned `500`. Retrying the insert (PR #19) made it rare but did not remove it. So now `create_reservation` first locks the table's row with `FOR NO KEY UPDATE`. Bookings for the same table wait for each other, and the second one sees the first booking and gets a normal `409`. The constraint still decides who gets the slot. The downside is that bookings for the same table are handled one at a time, but each one only holds the lock for a few milliseconds.
 
-So `create_reservation` reads the table row `FOR NO KEY UPDATE` before inserting. Bookings for the same table queue; the second sees the first committed and gets a clean `409`. This is not the defence above coming back: the constraint still decides who gets the slot, and a path that skipped the lock could at worst deadlock, never double-book. The cost is that bookings for one table are serialized even when their windows do not overlap; each holds the lock for a few milliseconds. `NO KEY` keeps foreign-key checks against the row unblocked.
-
-The pre-flight checks in `create_reservation` (table exists, belongs to the restaurant, capacity) produce friendly `400`/`404` messages. They are not the defence.
+The checks at the start of `create_reservation` (the table exists, belongs to the restaurant and is big enough) are only there to give clear `400` and `404` messages.
 
 ### Edits: optimistic, `xmin`
 
-A customer opens a booking, changes the party size, saves. Meanwhile another tab, or staff, changed it. A plain `UPDATE` silently overwrites that change: a lost update.
+A customer opens a booking and changes the party size. In the meantime staff, or another browser tab, has changed the same booking. A normal `UPDATE` would overwrite that change without anyone noticing (a lost update).
 
-A lock cannot help: the read happened in a browser, minutes and several HTTP requests before the write. So the write states which version it was based on.
+We cannot hold a lock here, because the customer read the booking in the browser, possibly minutes before saving. Instead the client tells us which version it edited:
 
-- Every reservation response carries `version` and `ETag: "<version>"`.
-- `PATCH` must send `If-Match: "<version>"`. Missing: `428`. Not the current version: `412`.
-- The `UPDATE` itself is `... WHERE id = :id AND xmin = :version`. A writer that commits between this request's read and write leaves it matching 0 rows: `409`.
-- Either way the client re-reads and retries. `DELETE` honours `If-Match` when sent; cancelling does not depend on the fields the client saw.
+- Every reservation response includes `version` and an `ETag` header with the same value.
+- `PATCH` has to send `If-Match` with that version. If it is missing we return `428`, and if it is not the current version we return `412`.
+- The `UPDATE` also checks the version (`WHERE id = :id AND xmin = :version`). If another request changed the row in between, no row is updated and we return `409`.
+- After `409` or `412` the client should load the booking again and retry. `DELETE` checks `If-Match` only when the client sends it.
 
-The version is PostgreSQL's `xmin` system column, mapped as SQLAlchemy's `version_id_col` (`app/models/reservation.py`). Npgsql's EF Core provider uses the same column for `RowVersion`. Over a `version INTEGER` column it has two advantages:
-
-- **Nothing can forget to bump it.** PostgreSQL changes `xmin` on every update: the API, the backfill script, `psql`. An application-maintained counter is only bumped by code that remembers to, the same weakness that ruled out row locks for bookings.
-- **No migration.** Every table already has it, so the mapping works on every schema from `0001` to `0004` and the CP2 migration can still be replayed.
-
-The cost: `xmin` is a transaction id, not a counter, so versions are not consecutive. Clients only compare them for equality.
+For the version we use PostgreSQL's `xmin` system column, mapped as SQLAlchemy's `version_id_col` in `app/models/reservation.py`. PostgreSQL changes `xmin` on every update, including updates from the backfill script or `psql`, so no code has to remember to increase a version number. It also needs no migration, so the model still works on every schema from `0001` to `0004`. The only drawback is that the values are not consecutive numbers, which does not matter because clients only compare them.
 
 ### Order status: pessimistic, `FOR UPDATE`
 
-`placed → preparing → ready → completed`; `placed` or `preparing` → `cancelled`. Whether a move is legal depends on the status at the moment of writing. Two staff press "ready" and "cancel" together: without a lock both read `preparing`, both pass the check, the last write wins, and the customer told "cancelled" sees "ready".
+An order moves `placed → preparing → ready → completed`, and it can be cancelled while `placed` or `preparing`. Whether a change is allowed depends on the current status. If two staff press "ready" and "cancel" at the same time without a lock, both read `preparing`, both changes look valid, and the last one wins. The customer could be told the order is cancelled while the kitchen sees it as ready.
 
-`advance_status` (`app/services/orders.py`) reads the status with `SELECT ... FOR UPDATE`. The second request blocks until the first commits, reads the new status, and is refused with an exact reason: `Order is cancelled; it cannot move to ready`.
+`advance_status` in `app/services/orders.py` reads the status with `SELECT ... FOR UPDATE`. The second request waits until the first one commits, then reads the new status and gets `409` with the reason, for example `Order is cancelled; it cannot move to ready`.
 
-Why a lock here and not for edits: read and write are milliseconds apart in one transaction, so the lock costs nothing, and waiting gives the loser a definite answer instead of "retry". Why not for bookings: the resource is a time range, not a row.
+We use a lock here because the read and the write happen in the same short transaction, so waiting costs almost nothing, and the second request gets a clear answer.
 
 ---
 

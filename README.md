@@ -196,7 +196,7 @@ pytest tests/test_concurrency.py tests/test_orders.py -v -s
 python scripts/traffic.py --mode concurrent --burst 20     # against a running server
 ```
 
-Expect one winner per race: twenty bookings for one table give one `201`, twenty edits of one version give one `200`. Every race and its result: [docs/PERFORMANCE.md](docs/PERFORMANCE.md#concurrency).
+Each race should have one winner. Twenty bookings for one table give one `201`, and twenty edits of the same version give one `200`. All the races and their results are listed in [docs/PERFORMANCE.md](docs/PERFORMANCE.md#2-concurrency-control).
 
 ### Load test
 
@@ -213,7 +213,7 @@ Prints `PASS`/`FAIL` per CP3 target and exits `1` on any `FAIL`.
 
 ## Performance audit (CP3)
 
-50 virtual users, 3 minutes, browsing, booking, editing and ordering:
+Load test with 50 virtual users for 3 minutes, browsing, booking, editing and ordering:
 
 | Target | Result |
 |---|---|
@@ -224,7 +224,7 @@ Prints `PASS`/`FAIL` per CP3 target and exits `1` on any `FAIL`.
 
 ![Throughput](docs/perf/throughput.png)
 
-Concurrency: double-booking by `EXCLUDE` constraint, lost updates by optimistic `xmin` versions (`409`/`412`), order status by `SELECT ... FOR UPDATE`. Every list endpoint runs a constant number of SQL queries. Charts, query plans, per-endpoint numbers and the fixes they led to: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+Double booking is prevented by the `EXCLUDE` constraint, lost updates by optimistic locking with `xmin` (`409`/`412`), and order status changes by `SELECT ... FOR UPDATE`. Every list endpoint runs the same number of SQL queries no matter how many rows it returns. The full report, with the latency chart, query plans and per-endpoint numbers, is [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 ---
 
@@ -250,7 +250,7 @@ Concurrency: double-booking by `EXCLUDE` constraint, lost updates by optimistic 
 | MongoDB: 3 collections, flexible documents | Done |
 | Seed data | 2,468 rows / 7,300 documents |
 | REST API | Done |
-| Migration history | `0001`–`0004` |
+| Migration history | `0001` to `0004` |
 | Expand-Contract migration run | Rehearsed three times at 25 req/s: 0 failures, p99 under 100 ms |
 | Concurrency control (CP3) | Constraint, optimistic and pessimistic; 20-way race tests |
 | Query audit (CP3) | Every list endpoint O(1) SQL, asserted in tests |
