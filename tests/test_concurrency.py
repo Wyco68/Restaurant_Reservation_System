@@ -24,17 +24,22 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import sys
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
-from app.db import postgres
-from app.main import app
-from app.security import create_access_token
+# Run as a script, the project root is not on the path; under pytest it is.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.db import postgres  # noqa: E402
+from app.main import app  # noqa: E402
+from app.security import create_access_token  # noqa: E402
 
 USERS = 20
 
