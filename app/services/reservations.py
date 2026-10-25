@@ -42,15 +42,13 @@ minutes and several HTTP requests before the write.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import random
 
 from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import Select, select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 from sqlalchemy.orm.exc import StaleDataError
@@ -67,9 +65,6 @@ from app.schemas.reservation import (
 )
 
 log = logging.getLogger(__name__)
-
-DEADLOCK = "40P01"       # SQLSTATE deadlock_detected
-DEADLOCK_RETRIES = 5
 
 
 def split_guest_name(full: str) -> tuple[str, str]:
@@ -234,8 +229,19 @@ async def create_reservation(
     common cases. They are NOT the double-booking defence - the constraint
     is. Removing them would degrade the error messages, not the correctness.
     """
+    # FOR NO KEY UPDATE on the table's row, held until commit: bookings for
+    # the same table queue here instead of inserting side by side. Without
+    # it, two INSERTs for overlapping windows can deadlock while PostgreSQL
+    # checks the EXCLUDE constraint - each finds the other's uncommitted row
+    # and waits for its transaction - and one fails with 40P01 (a 500).
+    # Queued, the second INSERT sees the first one committed and gets a
+    # clean 409. The constraint still decides who gets the slot; the lock
+    # only orders the contenders. Bookings for other tables never wait, and
+    # NO KEY leaves foreign-key checks against the row unblocked.
     table = await session.scalar(
-        select(RestaurantTable).where(RestaurantTable.id == payload.restaurant_table_id)
+        select(RestaurantTable)
+        .where(RestaurantTable.id == payload.restaurant_table_id)
+        .with_for_update(key_share=True)
     )
     if table is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Table not found")
@@ -249,48 +255,28 @@ async def create_reservation(
             f"Party of {payload.party_size} exceeds table capacity of {table.capacity}",
         )
 
-    # Two concurrent INSERTs for overlapping windows can deadlock while the
-    # EXCLUDE constraint is checked: each finds the other's uncommitted row
-    # and waits for its transaction. PostgreSQL aborts one of them with
-    # 40P01. Unlike a unique index, an exclusion constraint has no
-    # speculative insertion to avoid this, so the aborted one is retried:
-    # by then the other has committed, and the retry gets the real answer -
-    # 409 if the window is taken, 201 if the winner rolled back.
-    # A rollback expires every object in the session, the caller included,
-    # so read user.id once, before any attempt.
-    user_id = user.id
-    for attempt in range(1, DEADLOCK_RETRIES + 1):
-        reservation = Reservation(
-            user_id=user_id,
-            restaurant_id=payload.restaurant_id,
-            restaurant_table_id=payload.restaurant_table_id,
-            party_size=payload.party_size,
-            starts_at=payload.starts_at,
-            ends_at=payload.ends_at,
-            status=ReservationStatus.CONFIRMED,
-        )
-        write_name(reservation, payload.guest_name)
-        session.add(reservation)
+    reservation = Reservation(
+        user_id=user.id,
+        restaurant_id=payload.restaurant_id,
+        restaurant_table_id=payload.restaurant_table_id,
+        party_size=payload.party_size,
+        starts_at=payload.starts_at,
+        ends_at=payload.ends_at,
+        status=ReservationStatus.CONFIRMED,
+    )
+    write_name(reservation, payload.guest_name)
+    session.add(reservation)
 
-        try:
-            await session.commit()
-            break
-        except IntegrityError as exc:
-            await session.rollback()
-            if "no_double_booking" in str(exc.orig):
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    "That table is already booked for an overlapping time window",
-                ) from exc
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Reservation violates a constraint") from exc
-        except OperationalError as exc:
-            await session.rollback()
-            if getattr(exc.orig, "sqlstate", None) != DEADLOCK or attempt == DEADLOCK_RETRIES:
-                raise
-            log.info("booking deadlocked on table %s, retrying", payload.restaurant_table_id)
-            # Every loser of a race retries at once and could deadlock
-            # again; a few random milliseconds spread them out.
-            await asyncio.sleep(random.uniform(0, 0.01 * attempt))
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if "no_double_booking" in str(exc.orig):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "That table is already booked for an overlapping time window",
+            ) from exc
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Reservation violates a constraint") from exc
 
     return await reload(session, reservation)
 
