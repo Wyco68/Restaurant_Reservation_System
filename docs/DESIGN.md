@@ -99,9 +99,19 @@ python scripts/seed.py --verify     # counts unchanged
 
 ## Concurrency
 
-One table, one 19:00 slot, twenty simultaneous requests. Exactly one must succeed.
+Three shared resources, three different races, three mechanisms. Each is the cheapest one that is still correct for its race.
 
-The naive implementation is a check-then-act race:
+| Resource | Race | Mechanism | Loser gets |
+|---|---|---|---|
+| A table for a time window | Two bookings both see it free | `EXCLUDE` constraint | `409` |
+| An existing reservation | Two edits from the same read | Optimistic: `xmin` version, `If-Match` | `412` or `409` |
+| An order's status | Two staff move it at once | Pessimistic: `SELECT ... FOR UPDATE` | `409` |
+
+Proof for all three: [PERFORMANCE.md](PERFORMANCE.md#concurrency).
+
+### Bookings: exclusion constraint
+
+One table, one 19:00 slot, twenty simultaneous requests. Exactly one must succeed. The naive implementation is a check-then-act race:
 
 ```python
 if not has_conflict(table_id, start, end):   # T1 and T2 both read "free"
@@ -110,14 +120,6 @@ if not has_conflict(table_id, start, end):   # T1 and T2 both read "free"
 
 No amount of care in application code closes this, because the window is *between two statements*.
 
-### Option A: row locking
-
-`SELECT ... FOR UPDATE` on the table row, then check overlap in Python. Correct, and a reasonable answer.
-
-Against it: correctness lives in application code. The admin panel, the seed script, a future bulk import, a teammate's new endpoint: each is a fresh chance to forget the lock and silently reintroduce the bug. The lock is also on the table row, a proxy for the real resource, so it serializes bookings for that table even at non-overlapping times.
-
-### Option B: exclusion constraint (chosen)
-
 ```sql
 EXCLUDE USING gist (
     restaurant_table_id WITH =,
@@ -125,28 +127,41 @@ EXCLUDE USING gist (
 ) WHERE (status <> 'cancelled')
 ```
 
-Overlap becomes structurally impossible, whatever the application does. Every write path is covered, including ones not yet written. No lock ordering, no deadlock design. Only genuinely overlapping windows block, so concurrency stays maximal, and the GiST index also serves availability queries.
+Overlap becomes structurally impossible, whatever the application does. Every write path is covered, including ones not yet written. The GiST index also answers availability: the query is written with the same expression and predicate so the planner can use it.
 
-Costs: needs `btree_gist`, and `IntegrityError` must be translated to `409`.
+Rejected as the defence, `SELECT ... FOR UPDATE` on the table row, then check in Python: correct, but correctness then lives in every code path that inserts, and forgetting the lock anywhere reintroduces double-booking. Application validation alone is the race above.
 
-### Option C: application validation alone
+**The constraint can deadlock; a row lock prevents it.** Two concurrent `INSERT`s for overlapping windows each find the other's uncommitted row while the constraint is checked, and each waits for the other's transaction. PostgreSQL detects the cycle after `deadlock_timeout` (1 s) and aborts one with `40P01`, which surfaced as a `500`. A unique index avoids this internally; an exclusion constraint does not. Retrying the aborted insert (#19) lowered the odds but did not remove them: on a cold database the retries ran out.
 
-Rejected. This is the race above. It appears to work in testing precisely because single-user testing never produces the interleaving that breaks it.
+So `create_reservation` reads the table row `FOR NO KEY UPDATE` before inserting. Bookings for the same table queue; the second sees the first committed and gets a clean `409`. This is not the defence above coming back: the constraint still decides who gets the slot, and a path that skipped the lock could at worst deadlock, never double-book. The cost is that bookings for one table are serialized even when their windows do not overlap; each holds the lock for a few milliseconds. `NO KEY` keeps foreign-key checks against the row unblocked.
 
-### Decision
+The pre-flight checks in `create_reservation` (table exists, belongs to the restaurant, capacity) produce friendly `400`/`404` messages. They are not the defence.
 
-Option B. One line in a migration, impossible to defeat from application code, and the easiest to reason about. Option A remains available as belt-and-braces if profiling ever shows constraint violations are hot. They are not, because the constraint only fires on genuine contention.
+### Edits: optimistic, `xmin`
 
-The pre-flight checks in `create_reservation` (table exists, belongs to the restaurant, capacity sufficient) produce friendly `400`/`404` messages. They are not the defence; deleting them would degrade error messages, not correctness.
+A customer opens a booking, changes the party size, saves. Meanwhile another tab, or staff, changed it. A plain `UPDATE` silently overwrites that change: a lost update.
 
-### Proof
+A lock cannot help: the read happened in a browser, minutes and several HTTP requests before the write. So the write states which version it was based on.
 
-```bash
-pytest tests/test_api.py::test_concurrent_booking_allows_exactly_one
-python scripts/traffic.py --mode concurrent --burst 20
-```
+- Every reservation response carries `version` and `ETag: "<version>"`.
+- `PATCH` must send `If-Match: "<version>"`. Missing: `428`. Not the current version: `412`.
+- The `UPDATE` itself is `... WHERE id = :id AND xmin = :version`. A writer that commits between this request's read and write leaves it matching 0 rows: `409`.
+- Either way the client re-reads and retries. `DELETE` honours `If-Match` when sent; cancelling does not depend on the fields the client saw.
 
-Exactly one `201`, nineteen `409`, one row. There is a third proof for free: `seed.py` inserts 600 reservations, so if its slot generator ever produced an overlap the seed itself would fail.
+The version is PostgreSQL's `xmin` system column, mapped as SQLAlchemy's `version_id_col` (`app/models/reservation.py`). Npgsql's EF Core provider uses the same column for `RowVersion`. Over a `version INTEGER` column it has two advantages:
+
+- **Nothing can forget to bump it.** PostgreSQL changes `xmin` on every update: the API, the backfill script, `psql`. An application-maintained counter is only bumped by code that remembers to, the same weakness that ruled out row locks for bookings.
+- **No migration.** Every table already has it, so the mapping works on every schema from `0001` to `0004` and the CP2 migration can still be replayed.
+
+The cost: `xmin` is a transaction id, not a counter, so versions are not consecutive. Clients only compare them for equality.
+
+### Order status: pessimistic, `FOR UPDATE`
+
+`placed → preparing → ready → completed`; `placed` or `preparing` → `cancelled`. Whether a move is legal depends on the status at the moment of writing. Two staff press "ready" and "cancel" together: without a lock both read `preparing`, both pass the check, the last write wins, and the customer told "cancelled" sees "ready".
+
+`advance_status` (`app/services/orders.py`) reads the status with `SELECT ... FOR UPDATE`. The second request blocks until the first commits, reads the new status, and is refused with an exact reason: `Order is cancelled; it cannot move to ready`.
+
+Why a lock here and not for edits: read and write are milliseconds apart in one transaction, so the lock costs nothing, and waiting gives the loser a definite answer instead of "retry". Why not for bookings: the resource is a time range, not a row.
 
 ---
 
@@ -279,16 +294,16 @@ One bcrypt hash is computed once and reused across all 200 seeded accounts; 200 
 
 | Technique | Where |
 |---|---|
-| Projection over eager loading | `GET /products` explicit Mongo projection; `GET /restaurants` selects named columns |
-| N+1 elimination | Availability fetches all conflicts in one query; `Order.items` uses `lazy="selectin"` |
-| Pagination everywhere | Every list endpoint, `limit` capped at 100 |
-| Compound indexes matching real queries | `(cuisine, city)`, `(restaurant_id, category)`, `(event_type, occurred_at)` |
-| Partial indexes | Backfill index covers only un-migrated rows |
-| Sparse indexes | `attributes.dietary`, telemetry `user_id` |
-| Connection pooling | `pool_size=10`, `pool_pre_ping=True` |
+| Column projection, no entities for read-only lists | `GET /reservations`, `GET /orders`, `GET /restaurants`, `GET /restaurants/{id}`, login, caller lookup |
+| One query per list: JOIN and GROUP BY instead of a loop | Booking list joins the restaurant name; order list joins it and counts lines; availability is one query |
+| Queries shaped to an existing index | Availability reuses the `no_double_booking` GiST index; product indexes put the sort field after the equality fields |
+| Pagination or `limit` on every list | Capped at 100 |
+| CPU-heavy work off the event loop | bcrypt in a worker thread; the pooled connection is released first |
+| Partial and sparse indexes | Backfill index covers only un-migrated rows; `attributes.dietary`, telemetry `user_id` |
+| Connection pooling | `pool_size=10`, `max_overflow=5`, `pool_pre_ping=True` |
 | Non-blocking telemetry | Written after commit, outside the transaction |
 
-Measurement is the next step: `EXPLAIN ANALYZE` before and after on the heaviest queries, and `.explain()` on the Mongo side.
+Measurements, query plans and the load test: [PERFORMANCE.md](PERFORMANCE.md).
 
 ---
 

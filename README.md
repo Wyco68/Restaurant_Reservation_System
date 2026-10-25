@@ -115,11 +115,14 @@ Base `/api/v1`. Full reference with examples: [docs/API_CONTRACT.md](docs/API_CO
 | `PATCH` | `/reservations/{id}` | PG | bearer |
 | `DELETE` | `/reservations/{id}` | PG | bearer |
 | `POST` | `/orders` | **PG + Mongo** | bearer |
+| `GET` | `/orders` | PG | bearer |
 | `PATCH` | `/orders/{id}/status` | PG | staff |
 | `GET` | `/health` | both | none |
 | `PUT` | `/admin/migration` | PG | admin |
 
-Status codes: `200` `201` `400` `401` `403` `404` `409` `422`
+Status codes: `200` `201` `400` `401` `403` `404` `409` `412` `422` `428`
+
+Editing a reservation needs `If-Match` with its `version`; see [Conventions](docs/API_CONTRACT.md#conventions).
 
 ---
 
@@ -149,8 +152,9 @@ Produces ~2,468 PostgreSQL rows and ~7,300 MongoDB documents.
 ### Tests
 
 ```bash
-pytest                    # all
-pytest -k concurrent      # double-booking test only
+pytest                                # all
+pytest tests/test_concurrency.py -s   # CP3 race-condition proof
+pytest tests/test_query_budget.py     # CP3 query audit: O(1) lists, projections
 ```
 
 Integration tests: they run against the Docker databases. Start and seed them first.
@@ -188,10 +192,39 @@ alembic upgrade 0004                                   #   drop guest_name
 ### Concurrency proof
 
 ```bash
-python scripts/traffic.py --mode concurrent --burst 20
+pytest tests/test_concurrency.py tests/test_orders.py -v -s
+python scripts/traffic.py --mode concurrent --burst 20     # against a running server
 ```
 
-Expect exactly one `201`, nineteen `409`, one row in the database.
+Expect one winner per race: twenty bookings for one table give one `201`, twenty edits of one version give one `200`. Every race and its result: [docs/PERFORMANCE.md](docs/PERFORMANCE.md#concurrency).
+
+### Load test
+
+```bash
+pip install -r loadtest/requirements.txt
+uvicorn app.main:app                                       # terminal 1: one worker
+locust -f loadtest/locustfile.py --headless -u 50 -r 10 -t 3m \
+    --host http://localhost:8000 --csv loadtest/results/run
+```
+
+Prints `PASS`/`FAIL` per CP3 target and exits `1` on any `FAIL`.
+
+---
+
+## Performance audit (CP3)
+
+50 virtual users, 3 minutes, browsing, booking, editing and ordering:
+
+| Target | Result |
+|---|---|
+| p95 < 200 ms | 20 ms |
+| p99 < 500 ms | 31 ms |
+| Errors < 1% | 0 of 11,686 |
+| Throughput | 65.2 req/s, steady |
+
+![Throughput](docs/perf/throughput.png)
+
+Concurrency: double-booking by `EXCLUDE` constraint, lost updates by optimistic `xmin` versions (`409`/`412`), order status by `SELECT ... FOR UPDATE`. Every list endpoint runs a constant number of SQL queries. Charts, query plans, per-endpoint numbers and the fixes they led to: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 ---
 
@@ -203,6 +236,7 @@ Expect exactly one `201`, nineteen `409`, one row in the database.
 | [docs/API_CONTRACT.md](docs/API_CONTRACT.md) | Every endpoint with request/response examples |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture decisions and trade-offs |
 | [docs/MIGRATION.md](docs/MIGRATION.md) | Running the zero-downtime migration (CP2 demo) |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | CP3 audit: concurrency proofs, query audit, load test |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Branching, commits, ownership, schedule |
 
 ---
@@ -218,4 +252,6 @@ Expect exactly one `201`, nineteen `409`, one row in the database.
 | REST API | Done |
 | Migration history | `0001`–`0004` |
 | Expand-Contract migration run | Rehearsed three times at 25 req/s: 0 failures, p99 under 100 ms |
-| Concurrency stress test (CP3) | Pending |
+| Concurrency control (CP3) | Constraint, optimistic and pessimistic; 20-way race tests |
+| Query audit (CP3) | Every list endpoint O(1) SQL, asserted in tests |
+| Load test (CP3) | 50 users, 3 min: p95 20 ms, p99 31 ms, 0 errors |

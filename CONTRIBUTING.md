@@ -62,10 +62,10 @@ Disjoint by design, so merge conflicts stay rare.
 
 | Member | Owns |
 |---|---|
-| **Aung Hein Saw** | `app/models/`, `app/db/postgres.py`, `app/security.py`, `app/routers/{users,auth}.py`, `alembic/`, `tests/test_reservation_model.py` |
-| **Joe D' Annibelle** | `app/services/reservations.py`, `app/routers/{reservations,restaurants}.py`, `app/schemas/reservation.py`, `scripts/traffic.py`, `tests/{conftest,test_api,test_name_migration}.py` |
-| **Aung Thiha** | `app/db/mongo.py`, `app/routers/products.py`, `app/schemas/product.py`, `scripts/{seed,backfill_names}.py`, `tests/test_backfill.py` |
-| **Win Moe Aung** | `docker-compose.yml`, `app/{main,config,migration}.py`, `app/services/orders.py`, `app/routers/{orders,admin}.py`, `scripts/phase.py`, `tests/test_admin_migration.py`, `frontend/`, `README.md`, `docs/`, branch and release management |
+| **Aung Hein Saw** | `app/models/`, `app/db/postgres.py`, `app/security.py`, `app/routers/{users,auth}.py`, `alembic/`, `tests/{test_reservation_model,test_query_budget}.py` |
+| **Joe D' Annibelle** | `app/services/reservations.py`, `app/routers/{reservations,restaurants}.py`, `app/schemas/reservation.py`, `scripts/traffic.py`, `tests/{conftest,test_api,test_name_migration,test_concurrency}.py` |
+| **Aung Thiha** | `app/db/mongo.py`, `app/routers/products.py`, `app/schemas/product.py`, `scripts/{seed,backfill_names}.py`, `tests/test_backfill.py`, `loadtest/` |
+| **Win Moe Aung** | `docker-compose.yml`, `app/{main,config,migration}.py`, `app/services/orders.py`, `app/schemas/order.py`, `app/routers/{orders,admin}.py`, `scripts/phase.py`, `tests/{test_admin_migration,test_orders}.py`, `frontend/`, `README.md`, `docs/`, branch and release management |
 
 Need a change in someone else's file? Message them first.
 

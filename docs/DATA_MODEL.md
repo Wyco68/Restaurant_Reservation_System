@@ -123,6 +123,8 @@ ALTER TABLE reservations
 
 No two non-cancelled reservations may share a table and overlap in time. The half-open range means back-to-back seatings do not clash: a booking ending 19:00 and one starting 19:00 are fine. The `WHERE` clause lets a cancellation free the slot. Concurrent inserts: one commits, the rest raise `IntegrityError`, which the service maps to `409`.
 
+**Version.** The model maps the system column `xmin` as `version` (`version_id_col`). No DDL: every PostgreSQL row has it, and every update changes it. It is the API's `version` / `ETag`, and every ORM `UPDATE` is guarded by `AND xmin = :version_read`. Why: [DESIGN.md](DESIGN.md#edits-optimistic-xmin).
+
 Indexes: `no_double_booking` (GiST), `idx_reservations_user (user_id, starts_at DESC)`, `idx_reservations_restaurant_time (restaurant_id, starts_at)`, `idx_reservations_backfill (id) WHERE first_name IS NULL` (`0002`–`0003` only)
 
 `first_name` and `last_name` are added nullable with no default so adding them is metadata-only: no table rewrite, no long lock. Each step: [DESIGN.md](DESIGN.md#migration).
@@ -228,7 +230,7 @@ A second document in the **same collection**, structurally different. That is th
 
 `attributes` is validated as "an object" and nothing more. Never used for pricing or authorization; only top-level `price` is authoritative.
 
-Indexes: `{restaurant_id, category}`, `{restaurant_id, is_available}`, `{name: text}`, `{price}`, `{attributes.dietary}` sparse
+Indexes: `{restaurant_id, category}`, `{restaurant_id, is_available, name}`, `{is_available, name}`, `{name: text}`, `{price}`, `{attributes.dietary}` sparse. The two `name` indexes serve `GET /products` with and without a restaurant filter already sorted, so there is no in-memory sort
 
 Volume: catalogue-scale, ~800 seeded.
 

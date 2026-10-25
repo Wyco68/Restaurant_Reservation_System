@@ -1,4 +1,4 @@
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { api, session, signOut } from "../api.js";
 import BaseIcon from "../components/BaseIcon.js";
@@ -15,7 +15,6 @@ export default {
   setup() {
     const router = useRouter();
     const bookings = ref([]);
-    const names = reactive({});        // restaurant_id -> name
     const state = ref("loading");      // loading | ready | unavailable | error
     const error = ref("");
     const cancelling = ref(null);
@@ -26,24 +25,12 @@ export default {
       { id: "past", title: "Past & cancelled", items: bookings.value.filter((b) => !isUpcoming(b)) },
     ].filter((g) => g.items.length));
 
-    // A booking carries only restaurant_id; each name is fetched once.
-    async function loadNames(list) {
-      const missing = [...new Set(list.map((b) => b.restaurant_id))].filter((id) => !(id in names));
-      await Promise.all(missing.map(async (id) => {
-        try {
-          names[id] = (await api(`/api/v1/restaurants/${id}`)).name;
-        } catch {
-          names[id] = `Restaurant #${id}`;
-        }
-      }));
-    }
-
     async function load() {
       state.value = "loading";
       try {
-        // Latest first, cancelled included - see GET /reservations.
+        // Latest first, cancelled included, restaurant name joined in by
+        // the API - one request for the whole list.
         bookings.value = await api("/api/v1/reservations");
-        await loadNames(bookings.value);
         state.value = "ready";
       } catch (e) {
         // 404/405: the API running here has no list endpoint yet.
@@ -56,10 +43,20 @@ export default {
       cancelling.value = b.id;
       error.value = "";
       try {
-        const updated = await api(`/api/v1/reservations/${b.id}`, { method: "DELETE" });
-        bookings.value = bookings.value.map((x) => (x.id === b.id ? updated : x));
+        const updated = await api(`/api/v1/reservations/${b.id}`, {
+          method: "DELETE",
+          headers: { "If-Match": `"${b.version}"` },
+        });
+        // The cancel response is a single reservation, without the joined name.
+        bookings.value = bookings.value.map((x) =>
+          x.id === b.id ? { ...updated, restaurant_name: x.restaurant_name } : x);
       } catch (e) {
-        error.value = e.message;
+        // 412/409: the booking changed since this page loaded. Show the
+        // current state instead of acting on a stale one.
+        if (e.status === 412 || e.status === 409) await load();
+        error.value = e.status === 412 || e.status === 409
+          ? "This booking changed since the page loaded. Here is its current state."
+          : e.message;
       } finally {
         cancelling.value = null;
       }
@@ -75,7 +72,7 @@ export default {
     });
 
     return {
-      session, bookings, names, state, error, groups, cancelling,
+      session, bookings, state, error, groups, cancelling,
       isUpcoming, cancel, leave, when,
     };
   },
@@ -133,7 +130,7 @@ export default {
                 :class="{ 'booking--past': !isUpcoming(b) }">
               <router-link :to="'/confirmation/' + b.id" class="booking__link">
                 <span class="booking__date"><BaseIcon name="calendar" :size="15" /> {{ when(b.starts_at) }}</span>
-                <span class="booking__place">{{ names[b.restaurant_id] || 'Restaurant #' + b.restaurant_id }}</span>
+                <span class="booking__place">{{ b.restaurant_name }}</span>
                 <span class="booking__meta">
                   <BaseIcon name="users" :size="14" /> {{ b.party_size }} · {{ b.guest_name }}
                 </span>

@@ -28,10 +28,14 @@ Schema details: [DATA_MODEL.md](DATA_MODEL.md). Design rationale: [DESIGN.md](DE
 | `401` | Missing, malformed or expired token |
 | `403` | Authenticated but not permitted |
 | `404` | Resource does not exist |
-| `409` | Uniqueness or availability conflict |
+| `409` | Uniqueness, availability or concurrent-write conflict; illegal status transition |
+| `412` | `If-Match` is not the resource's current version |
 | `422` | Payload failed schema validation |
+| `428` | `If-Match` required and missing |
 
 `400` and `422` are both used deliberately: `422` means the shape is wrong (missing field, wrong type), `400` means the shape is fine but the request still cannot be honoured.
+
+**Versions.** A reservation carries `version` in its body and `ETag: "<version>"` on single-reservation responses. Send it back as `If-Match` to change it. On `409` or `412`, re-read and retry. Why and how: [DESIGN.md](DESIGN.md#edits-optimistic-xmin).
 
 ---
 
@@ -57,6 +61,7 @@ Schema details: [DATA_MODEL.md](DATA_MODEL.md). Design rationale: [DESIGN.md](DE
 | `PATCH` | `/reservations/{id}` | PG | bearer | |
 | `DELETE` | `/reservations/{id}` | PG | bearer | |
 | `POST` | `/orders` | **PG + Mongo** | bearer | yes |
+| `GET` | `/orders` | PG | bearer | |
 | `GET` | `/orders/{id}` | PG | bearer | |
 | `PATCH` | `/orders/{id}/status` | PG | staff | |
 | `GET` | `/health` | both | none | |
@@ -295,9 +300,12 @@ Errors: `401` · `403` reservation belongs to another user · `404` restaurant, 
   "starts_at": "2026-10-02T19:00:00+07:00",
   "ends_at": "2026-10-02T20:30:00+07:00",
   "status": "confirmed",
-  "created_at": "2026-09-20T09:20:00Z"
+  "created_at": "2026-09-20T09:20:00Z",
+  "version": 1048213
 }
 ```
+
+Header `ETag: "1048213"`.
 
 `409`:
 
@@ -319,6 +327,29 @@ Errors: `422` naive timestamp or bad window · `400` table mismatch, inactive, o
 
 ---
 
+## PATCH /reservations/{id}
+
+Optimistic concurrency. `If-Match` is required.
+
+```http
+PATCH /api/v1/reservations/8812
+If-Match: "1048213"
+
+{ "party_size": 5 }
+```
+
+`200`: the reservation with its new `version`, and the new `ETag`. Any of `guest_name`, `party_size`, `status`; a new `guest_name` is dual-written like a create.
+
+| Code | When | Client does |
+|---|---|---|
+| `428` | No `If-Match` | Send the version it read |
+| `412` | `If-Match` is not the current version: someone changed it since the client read it | Re-read, reapply, retry |
+| `409` | Another request changed it between this request's read and write | Re-read, reapply, retry |
+
+Also `401` · `403` not yours · `404` · `422`
+
+---
+
 ## GET /restaurants/{id}/availability
 
 Query: `starts_at`, `ends_at` (ISO-8601 with offset), `party_size` (1–20).
@@ -332,7 +363,7 @@ Query: `starts_at`, `ends_at` (ISO-8601 with offset), `party_size` (1–20).
 
 **Advisory only.** A table shown available can be taken before the booking request arrives, an unavoidable race in any check-then-act flow. The authoritative answer is the `201`-or-`409` from `POST /reservations`.
 
-Conflicts for all candidate tables are fetched in one query, not one per table.
+One query for every candidate table, answered from the `no_double_booking` GiST index. Same `[)` rule as the constraint: a window starting when a booking ends is free.
 
 Errors: `400` `ends_at <= starts_at`
 
@@ -352,6 +383,26 @@ Query: `page`, `limit` (≤100), `city`, `cuisine`, `max_price_range` (1–4), `
 ```
 
 Selects six named columns rather than whole entities, so `address` and the `owner` relationship are never loaded for a result list.
+
+---
+
+## GET /orders
+
+The caller's orders, newest first. Query: `limit` (1–100, default 50).
+
+```json
+[
+  {
+    "id": 4471, "restaurant_id": 17, "restaurant_name": "Suzuki Kitchen", "reservation_id": 8812,
+    "status": "placed", "total_amount": 680.00, "currency": "THB",
+    "created_at": "2026-09-20T12:44:10Z", "item_count": 2
+  }
+]
+```
+
+One SQL query: the restaurant name is joined and `item_count` (order lines) is a `GROUP BY` count. Line items are not returned; `GET /orders/{id}` has them.
+
+Errors: `401`
 
 ---
 
@@ -413,9 +464,8 @@ Errors: `401` · `403` not admin · `409` unsafe transition · `422` unknown pha
 | `GET /restaurants/{id}` | `200` `404` | Full record including address |
 | `POST /restaurants` | `201` `401` `403` | Caller becomes `owner_id` |
 | `GET /products/{id}` | `200` `400` `404` | Full document including `attributes` |
-| `GET /reservations` | `200` `401` | The caller's own bookings, latest first, cancelled included |
+| `GET /reservations` | `200` `401` | The caller's own bookings, latest first, cancelled included. `limit` 1–100, default 50. Each row adds `restaurant_name`, joined in the same query |
 | `GET /reservations/{id}` | `200` `401` `403` `404` | |
-| `PATCH /reservations/{id}` | `200` `401` `403` `404` `422` | Change `guest_name`, `party_size` or `status`; a new `guest_name` is dual-written like a create |
-| `DELETE /reservations/{id}` | `200` | Sets `status: cancelled`; the constraint ignores cancelled rows, so the slot frees and history is kept |
+| `DELETE /reservations/{id}` | `200` `409` `412` | Sets `status: cancelled`; the constraint ignores cancelled rows, so the slot frees and history is kept. `If-Match` optional, honoured when sent |
 | `GET /orders/{id}` | `200` `403` `404` | Customers see only their own |
-| `PATCH /orders/{id}/status` | `200` `403` | Staff kitchen queue |
+| `PATCH /orders/{id}/status` | `200` `403` `404` `409` | Staff kitchen queue. `placed → preparing → ready → completed`; `placed` or `preparing` → `cancelled`. Anything else, including the status it already has: `409`. Concurrent changes are serialized by a row lock |

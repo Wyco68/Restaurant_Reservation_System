@@ -43,6 +43,7 @@ desktop.ini
 *.log
 logs/
 demo/*.mp4
+loadtest/results/
 
 # --- Handoff bundles ---
 # A member's bundle is unzipped outside the repo, applied, and committed by
