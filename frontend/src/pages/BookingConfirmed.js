@@ -16,18 +16,37 @@ const when = (iso) =>
     minute: "2-digit",
   });
 
+// The reservation only has the table's id. The availability list for the same
+// time slot has each table's number (e.g. "T3"), so look it up there.
+async function tableNumber(r) {
+  try {
+    const tables = await api(
+      `/api/v1/restaurants/${r.restaurant_id}/availability` +
+        `?starts_at=${encodeURIComponent(r.starts_at)}` +
+        `&ends_at=${encodeURIComponent(r.ends_at)}` +
+        `&party_size=${r.party_size}`
+    );
+    const t = tables.find((x) => x.restaurant_table_id === r.restaurant_table_id);
+    return t ? t.table_number : "";
+  } catch {
+    return "";
+  }
+}
+
 export default {
   name: "BookingConfirmed",
   components: { BaseIcon, FlowStepper, ErrorNote },
   setup() {
     const route = useRoute();
     const reservation = ref(null);
+    const table = ref("");
     const loading = ref(true);
     const error = ref("");
 
     onMounted(async () => {
       try {
         reservation.value = await api(`/api/v1/reservations/${route.params.id}`);
+        table.value = await tableNumber(reservation.value);
       } catch (e) {
         error.value = e.message;
       } finally {
@@ -35,7 +54,7 @@ export default {
       }
     });
 
-    return { reservation, loading, error, when };
+    return { reservation, table, loading, error, when };
   },
   template: `
     <section class="section container">
@@ -56,7 +75,7 @@ export default {
           <div class="summary__row"><dt>Guest</dt><dd>{{ reservation.guest_name }}</dd></div>
           <div class="summary__row"><dt>When</dt><dd>{{ when(reservation.starts_at) }}</dd></div>
           <div class="summary__row"><dt>Guests</dt><dd>{{ reservation.party_size }}</dd></div>
-          <div class="summary__row"><dt>Table</dt><dd>#{{ reservation.restaurant_table_id }}</dd></div>
+          <div class="summary__row"><dt>Table</dt><dd>{{ table || "#" + reservation.restaurant_table_id }}</dd></div>
           <div class="summary__row">
             <dt>Status</dt><dd style="text-transform: capitalize">{{ reservation.status }}</dd>
           </div>
