@@ -8,6 +8,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, session, windowFor, SERVICE_MINUTES } from "../api.js";
 import BaseIcon from "../components/BaseIcon.js";
+import DateTimePicker from "../components/DateTimePicker.js";
 import FlowStepper from "../components/FlowStepper.js";
 import ErrorNote from "../components/ErrorNote.js";
 
@@ -21,7 +22,7 @@ function defaultSlot() {
 
 export default {
   name: "BookTable",
-  components: { BaseIcon, FlowStepper, ErrorNote },
+  components: { BaseIcon, DateTimePicker, FlowStepper, ErrorNote },
   setup() {
     const route = useRoute();
     const router = useRouter();
@@ -159,7 +160,7 @@ export default {
           <div class="form-row form-row--2">
             <div class="field">
               <label for="b-when">Date and time</label>
-              <input id="b-when" v-model="form.startsAt" type="datetime-local" required>
+              <DateTimePicker id="b-when" v-model="form.startsAt" />
               <span class="field__hint">{{ SERVICE_MINUTES }}-minute sitting</span>
             </div>
 
