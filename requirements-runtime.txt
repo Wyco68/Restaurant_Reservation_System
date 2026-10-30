@@ -1,0 +1,25 @@
+# TableFlow: what the API image needs.
+# Python 3.11+
+
+# Web API
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic[email]==2.10.4
+pydantic-settings==2.7.0
+
+# PostgreSQL
+# SQLAlchemy 2.x. All queries use parameters; we do not build SQL strings.
+SQLAlchemy[asyncio]==2.0.36
+psycopg[binary,pool]==3.2.3
+alembic==1.14.0
+
+# MongoDB
+motor==3.6.0
+
+# Auth
+bcrypt==4.2.1
+PyJWT==2.10.1
+
+# Seed data and the ops scripts in scripts/
+Faker==33.1.0
+httpx==0.28.1

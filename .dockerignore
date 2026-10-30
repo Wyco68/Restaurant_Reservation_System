@@ -1,0 +1,17 @@
+# Allowlist: the build context holds only what an image copies.
+# Anything new stays out until it is listed here.
+*
+
+!Dockerfile
+!requirements.txt
+!requirements-runtime.txt
+!alembic.ini
+!alembic/
+!app/
+!scripts/
+!frontend/
+!docker/
+
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
