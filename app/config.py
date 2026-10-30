@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # App
     app_env: str = "development"
     log_level: str = "INFO"
+    # Comma-separated browser origins allowed to call the API. The web image
+    # proxies /api on its own origin, so it needs none of these.
+    cors_origins: str = "http://localhost:5500,http://127.0.0.1:5500"
 
     # guest_name migration: the phase a new process starts in. It is changed
     # with PUT /api/v1/admin/migration and lowered at startup if the schema
@@ -61,6 +64,10 @@ class Settings(BaseSettings):
                 "Generate one: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
             )
         return v
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def postgres_dsn(self) -> str:

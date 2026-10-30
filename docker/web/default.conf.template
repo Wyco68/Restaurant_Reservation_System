@@ -1,0 +1,57 @@
+# Rendered by the nginx image at start: ${API_UPSTREAM} and ${API_BASE} come
+# from the environment. nginx variables ($host, $uri) are left alone because
+# only defined environment variables are substituted.
+
+server {
+    listen 8080;
+    server_name _;
+    server_tokens off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # Liveness for Docker and Kubernetes. Does not touch the API.
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Runtime config for the client, so the same image works on any host.
+    location = /config.js {
+        default_type application/javascript;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+        return 200 'window.TABLEFLOW_CONFIG = { apiBase: "${API_BASE}" };\n';
+    }
+
+    # Same-origin API. /metrics is not proxied: it is for Prometheus only.
+    location ~ ^/(api/|health|docs|openapi\.json) {
+        proxy_pass ${API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+    }
+
+    # Vendored Vue builds change only when the files are replaced.
+    location /vendor/ {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "public, max-age=604800" always;
+    }
+
+    # Hash routing, so every page is index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
