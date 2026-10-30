@@ -1,9 +1,42 @@
-# TableFlow: local databases for development.
-# Starts PostgreSQL and MongoDB with data volumes.
+# TableFlow: local databases for development, and the whole stack.
+#
+#   docker compose up -d                    databases only (run the API with uvicorn)
+#   docker compose --profile app up -d      + migrations, API and web on :8080
 #
 # There are no passwords in this file. They come from .env, which is not in
-# git. Copy .env.example to .env and change the passwords before running.
-# The example values are only for local development.
+# git. Copy .env.example to .env and change the passwords before running,
+# or run scripts/make_env.sh to generate them.
+
+# Settings shared by every container that runs the API image. Hosts and
+# ports are the in-network ones, not the ones published on the host.
+x-api-env: &api-env
+  POSTGRES_DB: ${POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_HOST: postgres_db
+  POSTGRES_PORT: "5432"
+  MONGO_DB: ${MONGO_DB}
+  MONGO_USER: ${MONGO_USER}
+  MONGO_PASSWORD: ${MONGO_PASSWORD}
+  MONGO_HOST: ${API_MONGO_HOST:-mongo_db}
+  MONGO_PORT: "27017"
+  JWT_SECRET: ${JWT_SECRET}
+  JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+  JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-60}
+  APP_ENV: ${APP_ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # The image runs head (0004), which only supports new_only.
+  NAME_MIGRATION_PHASE: new_only
+  # Only nginx reaches the API on this network, so its X-Forwarded-For is
+  # trusted for the client address.
+  FORWARDED_ALLOW_IPS: "*"
+
+x-api-image: &api-image
+  image: ${API_IMAGE:-tableflow-api:local}
+  build:
+    context: .
+    args:
+      GIT_SHA: ${GIT_SHA:-dev}
 
 services:
   postgres_db:
@@ -52,6 +85,53 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    networks:
+      - tableflow_net
+
+  # One-shot: brings the schema to head, then exits. The API waits for it.
+  migrate:
+    <<: *api-image
+    profiles: ["app"]
+    command: ["alembic", "upgrade", "head"]
+    environment: *api-env
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - tableflow_net
+
+  api:
+    <<: *api-image
+    profiles: ["app"]
+    environment: *api-env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      mongo_db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - tableflow_net
+
+  web:
+    image: ${WEB_IMAGE:-tableflow-web:local}
+    build:
+      context: .
+      dockerfile: docker/web/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+    profiles: ["app"]
+    environment:
+      API_UPSTREAM: http://api:8000
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - tableflow_net
 
