@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     mongo_host: str = "localhost"
     mongo_port: int = 27017
 
+    # Redis response cache (app/cache.py). Empty turns the cache off.
+    redis_url: str = ""
+    cache_ttl_seconds: int = Field(default=60, ge=1)
+    # Kept short: a slow Redis must not make a request slower than a miss.
+    redis_timeout_seconds: float = Field(default=0.25, gt=0)
+
     # Auth
     # No default and at least 32 characters, because a short key makes the
     # tokens easy to forge.

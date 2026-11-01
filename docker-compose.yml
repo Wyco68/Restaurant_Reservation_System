@@ -1,6 +1,6 @@
 # TableFlow: local databases for development, and the whole stack.
 #
-#   docker compose up -d                    databases only (run the API with uvicorn)
+#   docker compose up -d                    databases and Redis (run the API with uvicorn)
 #   docker compose --profile app up -d      + migrations, API and web on :8080
 #
 # There are no passwords in this file. They come from .env, which is not in
@@ -23,6 +23,8 @@ x-api-env: &api-env
   JWT_SECRET: ${JWT_SECRET}
   JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
   JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-60}
+  REDIS_URL: redis://redis:6379/0
+  CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-60}
   APP_ENV: ${APP_ENV:-development}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   # The image runs head (0004), which only supports new_only.
@@ -88,6 +90,25 @@ services:
     networks:
       - tableflow_net
 
+  # Response cache. Holds nothing that cannot be rebuilt, so no volume and
+  # no persistence; LRU eviction caps its memory.
+  redis:
+    image: redis:7.4-alpine
+    container_name: tableflow_redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru",
+              "--save", "", "--appendonly", "no"]
+    ports:
+      # Loopback only: there is no password on the dev cache.
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - tableflow_net
+
   # One-shot: brings the schema to head, then exits. The API waits for it.
   migrate:
     <<: *api-image
@@ -112,6 +133,9 @@ services:
         condition: service_completed_successfully
       mongo_db:
         condition: service_healthy
+      # Started, not healthy: the API runs without its cache.
+      redis:
+        condition: service_started
     restart: unless-stopped
     networks:
       - tableflow_net

@@ -16,6 +16,9 @@ alembic==1.14.0
 # MongoDB
 motor==3.6.0
 
+# Cache
+redis==5.2.1
+
 # Auth
 bcrypt==4.2.1
 PyJWT==2.10.1

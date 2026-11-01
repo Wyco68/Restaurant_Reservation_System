@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import migration
+from app import cache, migration
 from app.config import settings
 from app.db import mongo, postgres
 from app.routers import admin, auth, orders, products, reservations, restaurants, users
@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
     yield
     await postgres.close()
     await mongo.close()
+    await cache.close()
 
 
 app = FastAPI(
@@ -53,6 +54,10 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Added before CORS so CORS stays the outer layer and cached responses get
+# its headers too.
+app.add_middleware(cache.ResponseCache)
 
 # The frontend runs on another port in development. Behind the web image
 # the browser uses one origin and CORS is not involved. CORS_ORIGINS sets
@@ -87,6 +92,9 @@ async def health() -> dict:
         "status": "ok" if (pg_ok and mongo_ok) else "degraded",
         "postgres": pg_ok,
         "mongodb": mongo_ok,
+        # Optional: null when no cache is configured. A down Redis does not
+        # degrade the API, it only makes catalogue reads slower.
+        "redis": await cache.ping(),
         "env": settings.app_env,
         "name_migration_phase": migration.current().value,
     }
