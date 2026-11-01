@@ -2,6 +2,7 @@
 #
 #   docker compose up -d                    databases and Redis (run the API with uvicorn)
 #   docker compose --profile app up -d      + migrations, API and web on :8080
+#   ... --profile app --profile monitoring  + Prometheus :9090 and Grafana :3000
 #
 # There are no passwords in this file. They come from .env, which is not in
 # git. Copy .env.example to .env and change the passwords before running,
@@ -160,9 +161,49 @@ services:
     networks:
       - tableflow_net
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./docker/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+    networks:
+      - tableflow_net
+
+  # Dashboards are provisioned from files, so viewing needs no login.
+  # Signing in as admin (to edit) asks for a new password the first time.
+  grafana:
+    image: grafana/grafana-oss:11.3.1
+    profiles: ["monitoring"]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/tableflow.json
+    volumes:
+      - ./docker/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - tableflow_net
+
 volumes:
   postgres_data:
   mongo_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
   tableflow_net:
