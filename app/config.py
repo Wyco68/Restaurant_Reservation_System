@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # App
     app_env: str = "development"
     log_level: str = "INFO"
+    # json in containers (set by the Dockerfile), text in a terminal.
+    log_format: Literal["text", "json"] = "text"
+    # The image sets this to the git commit it was built from.
+    app_version: str = "dev"
     # Comma-separated browser origins allowed to call the API. The web image
     # proxies /api on its own origin, so it needs none of these.
     cors_origins: str = "http://localhost:5500,http://127.0.0.1:5500"

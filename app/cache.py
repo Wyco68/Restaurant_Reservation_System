@@ -32,6 +32,7 @@ import re
 import time
 from urllib.parse import parse_qsl, urlencode
 
+from prometheus_client import Counter
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
@@ -60,6 +61,12 @@ _PREFIXES: dict[str, str] = {
 }
 
 _WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+LOOKUPS = Counter(
+    "tableflow_cache_lookups_total",
+    "Cacheable GETs by namespace and result (hit, miss, bypass).",
+    ["namespace", "result"],
+)
 
 _url: str | None = settings.redis_url or None
 _skip_until = 0.0
@@ -186,6 +193,7 @@ class ResponseCache:
 
     async def _read(self, namespace, scope, receive, send) -> None:
         if not _available():
+            LOOKUPS.labels(namespace, "bypass").inc()
             await self.app(scope, receive, _add_header(send, b"BYPASS"))
             return
         try:
@@ -195,10 +203,12 @@ class ResponseCache:
             body = await client.get(key)
         except (RedisError, OSError) as exc:
             _trip(exc)
+            LOOKUPS.labels(namespace, "bypass").inc()
             await self.app(scope, receive, _add_header(send, b"BYPASS"))
             return
 
         if body is not None:
+            LOOKUPS.labels(namespace, "hit").inc()
             await send({
                 "type": "http.response.start",
                 "status": 200,
@@ -212,6 +222,7 @@ class ResponseCache:
             return
 
         # Miss: stream the response through and keep a copy.
+        LOOKUPS.labels(namespace, "miss").inc()
         status = 0
         content_type = b""
         chunks: list[bytes] = []

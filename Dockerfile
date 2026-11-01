@@ -34,7 +34,8 @@ LABEL org.opencontainers.image.title="tableflow-api" \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH=/opt/venv/bin:$PATH \
-    APP_VERSION=${GIT_SHA}
+    APP_VERSION=${GIT_SHA} \
+    LOG_FORMAT=json
 
 # Fixed UID so Kubernetes can check runAsNonRoot without a lookup.
 RUN groupadd --system --gid 10001 app \
@@ -51,7 +52,7 @@ USER 10001
 EXPOSE 8000
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2)"]
 
 # One process per container: scale with replicas, not workers. The
 # migration phase is per process (app/migration.py), so workers could

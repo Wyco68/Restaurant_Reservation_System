@@ -27,6 +27,7 @@ x-api-env: &api-env
   CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-60}
   APP_ENV: ${APP_ENV:-development}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: json
   # The image runs head (0004), which only supports new_only.
   NAME_MIGRATION_PHASE: new_only
   # Only nginx reaches the API on this network, so its X-Forwarded-For is

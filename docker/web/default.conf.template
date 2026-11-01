@@ -2,6 +2,13 @@
 # from the environment. nginx variables ($host, $uri) are left alone because
 # only defined environment variables are substituted.
 
+# Keep the caller's request ID so one ID follows the request from the
+# browser to the API logs; make one only when there is none.
+map $http_x_request_id $tf_request_id {
+    default $http_x_request_id;
+    ""      $request_id;
+}
+
 server {
     listen 8080;
     server_name _;
@@ -31,7 +38,12 @@ server {
         return 200 'window.TABLEFLOW_CONFIG = { apiBase: "${API_BASE}" };\n';
     }
 
-    # Same-origin API. /metrics is not proxied: it is for Prometheus only.
+    # Prometheus scrapes the API directly; the public site does not serve it.
+    location = /metrics {
+        return 404;
+    }
+
+    # Same-origin API.
     location ~ ^/(api/|health|docs|openapi\.json) {
         proxy_pass ${API_UPSTREAM};
         proxy_http_version 1.1;
@@ -39,7 +51,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Request-ID $request_id;
+        proxy_set_header X-Request-ID $tf_request_id;
         proxy_connect_timeout 5s;
         proxy_read_timeout 30s;
     }
