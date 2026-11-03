@@ -3,6 +3,8 @@
 #   docker compose up -d                    databases and Redis (run the API with uvicorn)
 #   docker compose --profile app up -d      + migrations, API and web on :8080
 #   ... --profile app --profile monitoring  + Prometheus :9090 and Grafana :3000
+#   --profile sharded                       + sharded MongoDB, mongos on :27018
+#                                             (API_MONGO_HOST=mongos points the API at it)
 #
 # There are no passwords in this file. They come from .env, which is not in
 # git. Copy .env.example to .env and change the passwords before running,
@@ -41,6 +43,27 @@ x-api-image: &api-image
     context: .
     args:
       GIT_SHA: ${GIT_SHA:-dev}
+
+# Every member of the sharded MongoDB cluster runs the same image with a
+# different ROLE (docker/mongo-sharded/entrypoint.sh).
+x-mongo-member: &mongo-member
+  image: ${MONGO_SHARDED_IMAGE:-tableflow-mongo-sharded:local}
+  build:
+    context: .
+    dockerfile: docker/mongo-sharded/Dockerfile
+  profiles: ["sharded"]
+  depends_on:
+    mongo_keyfile:
+      condition: service_completed_successfully
+  healthcheck:
+    test: ["CMD-SHELL", "test -f /tmp/ready && mongosh --quiet --eval 'quit(db.hello().isWritablePrimary ? 0 : 1)'"]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+    start_period: 10s
+  restart: unless-stopped
+  networks:
+    - tableflow_net
 
 services:
   postgres_db:
@@ -91,6 +114,84 @@ services:
       start_period: 10s
     networks:
       - tableflow_net
+
+  # Sharded MongoDB (profile: sharded): one config server, two shards and a
+  # mongos router. Each is a one-member replica set to keep it laptop-sized;
+  # production runs three members per set (k8s/components/mongo-sharded).
+
+  # One-shot: the shared keyfile members authenticate to each other with.
+  # Generated on first start into a volume, never stored in git.
+  mongo_keyfile:
+    image: ${MONGO_SHARDED_IMAGE:-tableflow-mongo-sharded:local}
+    build:
+      context: .
+      dockerfile: docker/mongo-sharded/Dockerfile
+    profiles: ["sharded"]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "[ -s /keys/keyfile ] || head -c 756 /dev/urandom | base64 -w0 > /keys/keyfile;
+         chown 999:999 /keys/keyfile && chmod 400 /keys/keyfile"
+    volumes:
+      - mongo_keyfile:/keys
+    restart: "no"
+
+  mongo_cfg:
+    <<: *mongo-member
+    environment:
+      ROLE: configsvr
+      RS_NAME: cfg
+      RS_HOST: mongo_cfg
+    volumes:
+      - mongo_keyfile:/etc/mongo-keyfile:ro
+      - mongo_cfg_data:/data/configdb
+
+  mongo_shard_a:
+    <<: *mongo-member
+    environment:
+      ROLE: shardsvr
+      RS_NAME: shard_a
+      RS_HOST: mongo_shard_a
+    volumes:
+      - mongo_keyfile:/etc/mongo-keyfile:ro
+      - mongo_shard_a_data:/data/db
+
+  mongo_shard_b:
+    <<: *mongo-member
+    environment:
+      ROLE: shardsvr
+      RS_NAME: shard_b
+      RS_HOST: mongo_shard_b
+    volumes:
+      - mongo_keyfile:/etc/mongo-keyfile:ro
+      - mongo_shard_b_data:/data/db
+
+  mongos:
+    <<: *mongo-member
+    environment:
+      ROLE: mongos
+      CONFIG_DB: cfg/mongo_cfg:27017
+      SHARDS: shard_a/mongo_shard_a:27017 shard_b/mongo_shard_b:27017
+      MONGO_USER: ${MONGO_USER}
+      MONGO_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_DB: ${MONGO_DB}
+    volumes:
+      - mongo_keyfile:/etc/mongo-keyfile:ro
+    ports:
+      - "${MONGOS_PORT:-27018}:27017"
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/ready && mongosh --quiet --eval 'db.adminCommand({ping: 1}).ok'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      mongo_cfg:
+        condition: service_healthy
+      mongo_shard_a:
+        condition: service_healthy
+      mongo_shard_b:
+        condition: service_healthy
 
   # Response cache. Holds nothing that cannot be rebuilt, so no volume and
   # no persistence; LRU eviction caps its memory.
@@ -204,6 +305,10 @@ volumes:
   mongo_data:
   prometheus_data:
   grafana_data:
+  mongo_keyfile:
+  mongo_cfg_data:
+  mongo_shard_a_data:
+  mongo_shard_b_data:
 
 networks:
   tableflow_net:

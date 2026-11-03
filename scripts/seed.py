@@ -346,7 +346,10 @@ def seed_mongo(db) -> dict[str, int]:
                 {"url": f"/static/reviews/{i}_{n}.jpg", "caption": fake.word()}
                 for n in range(random.randint(1, 3))
             ]
-        ops.append(UpdateOne({"_id": stable_oid("review", i)}, {"$set": doc}, upsert=True))
+        # restaurant_id is the shard key when reviews are sharded, and an
+        # upsert on a sharded collection must name it. Same result unsharded.
+        key = {"_id": stable_oid("review", i), "restaurant_id": doc["restaurant_id"]}
+        ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
     db["reviews"].bulk_write(ops, ordered=False)
 
     # user_telemetry
