@@ -1,5 +1,5 @@
 # Production. Three API replicas spread over nodes, autoscaling to ten,
-# and TLS from cert-manager.
+# sharded MongoDB, and TLS from cert-manager.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: tableflow
@@ -7,6 +7,9 @@ namespace: tableflow
 resources:
   - ../../base
   - namespace.yaml
+
+components:
+  - ../../components/mongo-sharded
 
 replicas:
   - name: api
@@ -18,6 +21,9 @@ images:
     newTag: main
   - name: tableflow-web
     newName: ghcr.io/wyco68/tableflow-web
+    newTag: main
+  - name: tableflow-mongo-sharded
+    newName: ghcr.io/wyco68/tableflow-mongo-sharded
     newTag: main
 
 patches:

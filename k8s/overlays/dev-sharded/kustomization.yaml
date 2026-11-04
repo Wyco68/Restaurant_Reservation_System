@@ -1,0 +1,39 @@
+# The dev environment with the production MongoDB topology, to try the
+# sharded cluster on a laptop: ./deploy.sh k8s dev-sharded
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tableflow-dev-sharded
+
+resources:
+  - ../dev
+
+components:
+  - ../../components/mongo-sharded
+
+images:
+  - name: tableflow-mongo-sharded
+    newName: tableflow-mongo-sharded
+    newTag: local
+
+patches:
+  - target:
+      kind: StatefulSet
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 1Gi
+  - target:
+      kind: Deployment
+      name: mongos
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  # Runs next to the plain dev environment, so it needs its own host.
+  - target:
+      kind: Ingress
+      name: tableflow
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: sharded.tableflow.local
