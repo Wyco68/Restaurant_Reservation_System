@@ -1,0 +1,86 @@
+# Single MongoDB instance. The prod overlay replaces it with the sharded
+# cluster (k8s/components/mongo-sharded).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  labels:
+    app.kubernetes.io/name: mongo
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mongo
+  ports:
+    - name: mongo
+      port: 27017
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  labels:
+    app.kubernetes.io/name: mongo
+    app.kubernetes.io/component: database
+spec:
+  serviceName: mongo
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongo
+        app.kubernetes.io/component: database
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: mongo
+          image: mongo:6.0
+          ports:
+            - name: mongo
+              containerPort: 27017
+          env:
+            - name: MONGO_INITDB_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: tableflow-config
+                  key: MONGO_DB
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: tableflow-config
+                  key: MONGO_USER
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tableflow-secrets
+                  key: MONGO_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ping: 1}).ok"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["mongosh", "--quiet", "--eval", "db.adminCommand({ping: 1}).ok"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

@@ -1,0 +1,75 @@
+# Production. Three API replicas spread over nodes, autoscaling to ten,
+# and TLS from cert-manager.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tableflow
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+replicas:
+  - name: api
+    count: 3
+
+images:
+  - name: tableflow-api
+    newName: ghcr.io/wyco68/tableflow-api
+    newTag: main
+  - name: tableflow-web
+    newName: ghcr.io/wyco68/tableflow-web
+    newTag: main
+
+patches:
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: api
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 3
+      - op: replace
+        path: /spec/maxReplicas
+        value: 10
+  # A node drain or upgrade keeps at least two API pods serving.
+  - target:
+      kind: PodDisruptionBudget
+      name: api
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 2
+  - target:
+      kind: Deployment
+      name: api
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+  - target:
+      kind: StatefulSet
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 20Gi
+  - target:
+      kind: Ingress
+      name: tableflow
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          cert-manager.io/cluster-issuer: letsencrypt
+      - op: replace
+        path: /spec/rules/0/host
+        value: tableflow.example.com
+      - op: add
+        path: /spec/tls
+        value:
+          - hosts: ["tableflow.example.com"]
+            secretName: tableflow-tls

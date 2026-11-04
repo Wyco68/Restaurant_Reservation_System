@@ -1,0 +1,20 @@
+# One rule: everything goes to the web tier, whose nginx serves the client
+# and proxies /api with per-client rate limits (docker/web). No
+# controller-specific annotations, so any Ingress controller works.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tableflow
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: tableflow.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http

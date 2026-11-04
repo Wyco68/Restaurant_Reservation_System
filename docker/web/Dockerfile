@@ -18,9 +18,12 @@ LABEL org.opencontainers.image.title="tableflow-web" \
 # Read by the template at container start (envsubst), so one image runs in
 # every environment. API_BASE empty means same origin.
 ENV API_UPSTREAM=http://api:8000 \
-    API_BASE=""
+    API_BASE="" \
+    API_RATE_LIMIT=30r/s \
+    API_RATE_BURST=60 \
+    LOGIN_RATE_LIMIT=10r/m
 
-COPY docker/web/security-headers.conf /etc/nginx/snippets/security-headers.conf
+COPY docker/web/security-headers.conf docker/web/proxy.conf /etc/nginx/snippets/
 COPY docker/web/default.conf.template /etc/nginx/templates/default.conf.template
 COPY frontend/ /usr/share/nginx/html/
 

@@ -1,0 +1,46 @@
+# TableFlow on Kubernetes: everything an environment needs except the
+# tableflow-secrets Secret, which deploy.sh creates and git never holds.
+#
+#   kubectl kustomize k8s/overlays/dev      # render
+#   ./deploy.sh k8s dev                     # deploy (migrations first)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: tableflow
+    includeSelectors: false
+
+resources:
+  - api.yaml
+  - web.yaml
+  - migrate-job.yaml
+  - postgres.yaml
+  - mongo.yaml
+  - redis.yaml
+  - ingress.yaml
+  - network-policy.yaml
+
+# Non-secret settings. The generated name has a content hash, so changing a
+# value rolls the API pods without a manual restart.
+configMapGenerator:
+  - name: tableflow-config
+    literals:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=tableflow
+      - POSTGRES_USER=tableflow
+      - MONGO_HOST=mongo
+      - MONGO_PORT=27017
+      - MONGO_DB=tableflow
+      - MONGO_USER=tableflow
+      - REDIS_URL=redis://redis:6379/0
+      - CACHE_TTL_SECONDS=60
+      - APP_ENV=production
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - NAME_MIGRATION_PHASE=new_only
+      # Only the web tier reaches the API (network-policy.yaml).
+      - FORWARDED_ALLOW_IPS=*
+      # The browser only talks to the web tier's origin.
+      - CORS_ORIGINS=
