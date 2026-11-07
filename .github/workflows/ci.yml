@@ -1,0 +1,188 @@
+# Every push and pull request: lint, test against real databases, validate
+# the Kubernetes manifests, deploy the whole stack to a throwaway kind
+# cluster, and build + scan the images. Pushes to main and v* tags also
+# publish the images to GHCR, tagged with the commit.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# Third-party actions are pinned to a commit, not a tag: a tag can be moved
+# to other code after the fact. Dependabot proposes the updates.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: ruff
+        run: |
+          pip install ruff==0.8.4
+          ruff check .
+      - name: shellcheck
+        run: shellcheck deploy.sh scripts/*.sh docker/mongo-sharded/*.sh
+      - name: hadolint
+        run: |
+          for file in Dockerfile docker/web/Dockerfile docker/mongo-sharded/Dockerfile; do
+            echo "== $file"
+            docker run --rm -i hadolint/hadolint:v2.12.0 < "$file"
+          done
+      - name: compose file
+        run: |
+          cp .env.example .env
+          docker compose --profile app --profile sharded --profile monitoring config -q
+      - name: alert rules
+        run: docker run --rm --entrypoint promtool -v "$PWD/docker/monitoring:/m:ro" prom/prometheus:v2.55.1 check rules /m/alerts.yml
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      # Same compose file as development, with fresh random secrets per run.
+      - name: databases
+        run: |
+          scripts/make_env.sh
+          docker compose up -d --wait postgres_db mongo_db redis
+      - run: pip install -r requirements.txt
+      # Every migration up and down on an empty schema, then to head.
+      - name: migrations round trip
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+      - run: python scripts/seed.py
+      - name: pytest
+        run: pytest
+        env:
+          TEST_REDIS_URL: redis://localhost:6379/15
+      - name: container logs
+        if: failure()
+        run: docker compose logs --tail=100
+
+  manifests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar -xz kubeconform
+          for overlay in k8s/overlays/*/; do
+            echo "== $overlay"
+            kubectl kustomize "$overlay" | ./kubeconform -strict -summary -kubernetes-version 1.31.0 -
+          done
+
+  # deploy.sh against a real cluster: build, load, secrets, migration Job,
+  # rollout, smoke test. Catches what schema validation cannot.
+  e2e:
+    needs: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: helm/kind-action@a1b0e391336a6ee6713a0583f8c6240d70863de3 # v1.12.0
+        with:
+          cluster_name: tableflow
+      - name: deploy
+        run: ./deploy.sh k8s dev --yes
+      - name: seed
+        run: ./deploy.sh seed dev
+      - name: status
+        run: ./deploy.sh status dev
+      - name: cluster state
+        if: failure()
+        run: |
+          kubectl -n tableflow-dev get all,events --sort-by=.metadata.creationTimestamp
+          kubectl -n tableflow-dev logs deploy/api --tail=50 || true
+          kubectl -n tableflow-dev logs job/migrate --all-containers --tail=50 || true
+
+  images:
+    needs: [lint, test]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: tableflow-api
+            dockerfile: Dockerfile
+          - image: tableflow-web
+            dockerfile: docker/web/Dockerfile
+          - image: tableflow-mongo-sharded
+            dockerfile: docker/mongo-sharded/Dockerfile
+    env:
+      PUSH: ${{ github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # The image reports this as its version; deploy.sh uses the same form.
+      - run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: env.PUSH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The short commit is the tag deploy.sh deploys; main and the version
+      # are moving tags for people, not for deploys.
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=ref,event=pr
+      - name: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          load: true
+          tags: scan/${{ matrix.image }}:ci
+          build-args: |
+            GIT_SHA=${{ env.SHORT_SHA }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      # Fails on critical vulnerabilities that have a fix available.
+      - name: scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan/${{ matrix.image }}:ci
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: push
+        if: env.PUSH == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ env.SHORT_SHA }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          provenance: true
+          sbom: true

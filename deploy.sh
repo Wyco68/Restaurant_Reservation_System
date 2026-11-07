@@ -67,7 +67,7 @@ random() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$1"; }
 
 git_tag() {
   local tag
-  tag=$(git rev-parse --short HEAD)
+  tag=$(git rev-parse --short=7 HEAD)
   # Unique tag for uncommitted work, so the cluster always pulls the new
   # image instead of reusing an older one with the same name.
   if [[ -n $(git status --porcelain --untracked-files=no) ]]; then

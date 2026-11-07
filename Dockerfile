@@ -16,8 +16,11 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN python -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 
+WORKDIR /build
 # Copied on its own so the dependency layer is reused until the file changes.
 COPY requirements-runtime.txt .
+# The pip cache lives in a BuildKit cache mount, not in the image layer.
+# hadolint ignore=DL3042
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements-runtime.txt
 
