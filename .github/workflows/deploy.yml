@@ -1,0 +1,97 @@
+# Continuous delivery with deploy.sh.
+#
+#   main, after CI passes  -> staging, automatically
+#   Run workflow (manual)  -> staging or prod; deploy or rollback
+#
+# Each GitHub environment (staging, prod) holds its own secrets:
+#   KUBECONFIG         base64 kubeconfig for that cluster
+#   POSTGRES_PASSWORD  MONGO_PASSWORD  JWT_SECRET
+# Give "prod" required reviewers in Settings > Environments, so a
+# production run waits for approval.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Where to
+        type: choice
+        options: [staging, prod]
+        default: staging
+      action:
+        description: deploy, or roll API and web back one release
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
+      tag:
+        description: Image tag (short commit). Empty means the selected branch's commit.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # Automatic runs only for CI that passed on a push to main.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    environment:
+      name: ${{ inputs.environment || 'staging' }}
+    # One deploy per environment at a time, and never cancel one halfway.
+    concurrency:
+      group: deploy-${{ inputs.environment || 'staging' }}
+      cancel-in-progress: false
+    env:
+      TARGET: ${{ inputs.environment || 'staging' }}
+      ACTION: ${{ inputs.action || 'deploy' }}
+    steps:
+      # The exact commit CI tested and built images for.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: echo "IMAGE_TAG=${INPUT_TAG:-${COMMIT::7}}" >> "$GITHUB_ENV"
+
+      - name: kubeconfig
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG }}
+        run: |
+          [ -n "$KUBECONFIG_DATA" ] || { echo "::error::no KUBECONFIG secret in environment $TARGET"; exit 1; }
+          mkdir -p ~/.kube
+          printf '%s' "$KUBECONFIG_DATA" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl version
+
+      - name: deploy
+        if: env.ACTION == 'deploy'
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          MONGO_PASSWORD: ${{ secrets.MONGO_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        # CI already built, scanned and pushed the images for this commit.
+        run: ./deploy.sh k8s "$TARGET" --no-build --tag "$IMAGE_TAG"
+
+      - name: rollback
+        if: env.ACTION == 'rollback'
+        run: ./deploy.sh rollback "$TARGET"
+
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### $ACTION $IMAGE_TAG to $TARGET"
+            echo '```'
+            ./deploy.sh status "$TARGET" 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
