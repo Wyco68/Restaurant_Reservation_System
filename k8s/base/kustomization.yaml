@@ -20,6 +20,7 @@ resources:
   - redis.yaml
   - ingress.yaml
   - network-policy.yaml
+  - backup.yaml
 
 # Non-secret settings. The generated name has a content hash, so changing a
 # value rolls the API pods without a manual restart.

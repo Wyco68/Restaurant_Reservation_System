@@ -6,7 +6,7 @@
 ENV ?= dev
 
 .DEFAULT_GOAL := help
-.PHONY: help env db stack stack-sharded down test images k8s diff seed status rollback
+.PHONY: help env db stack stack-sharded down test backup restore images k8s diff seed status rollback
 
 help: ## list targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-15s %s\n", $$1, $$2}'
@@ -28,6 +28,12 @@ down: ## stop compose (data volumes are kept)
 
 test: ## test suite (needs `make db` and a seeded database)
 	pytest
+
+backup: ## dump both compose databases into backups/
+	scripts/backup.sh
+
+restore: ## restore a backup: make restore DIR=backups/<time>
+	scripts/restore.sh $(DIR)
 
 images: ## build the API, web and MongoDB images
 	docker build -t tableflow-api:local .
