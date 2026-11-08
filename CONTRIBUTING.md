@@ -65,7 +65,7 @@ Disjoint by design, so merge conflicts stay rare.
 | **Aung Hein Saw** | `app/models/`, `app/db/postgres.py`, `app/security.py`, `app/routers/{users,auth}.py`, `alembic/`, `tests/{test_reservation_model,test_query_budget}.py` |
 | **Joe D' Annibelle** | `app/services/reservations.py`, `app/routers/{reservations,restaurants}.py`, `app/schemas/reservation.py`, `scripts/traffic.py`, `tests/{conftest,test_api,test_name_migration,test_concurrency}.py` |
 | **Aung Thiha** | `app/db/mongo.py`, `app/routers/products.py`, `app/schemas/product.py`, `scripts/{seed,backfill_names}.py`, `tests/test_backfill.py`, `loadtest/` |
-| **Win Moe Aung** | `docker-compose.yml`, `app/{main,config,migration}.py`, `app/services/orders.py`, `app/schemas/order.py`, `app/routers/{orders,admin}.py`, `scripts/phase.py`, `tests/{test_admin_migration,test_orders}.py`, `frontend/`, `README.md`, `docs/`, branch and release management |
+| **Win Moe Aung** | `docker-compose.yml`, `Dockerfile`, `docker/`, `k8s/`, `deploy.sh`, `Makefile`, `.github/`, `app/{main,config,migration,cache,observability}.py`, `scripts/{make_env,backup,restore}.sh`, `scripts/wait_for.py`, `tests/{test_cache,test_observability}.py`, `app/services/orders.py`, `app/schemas/order.py`, `app/routers/{orders,admin}.py`, `scripts/phase.py`, `tests/{test_admin_migration,test_orders}.py`, `frontend/`, `README.md`, `docs/`, branch and release management |
 
 Need a change in someone else's file? Message them first.
 
@@ -88,7 +88,7 @@ Six places where two members' work meets. Change one without telling the other a
 
 1. Runs on a clean clone: see [README](README.md#quick-start)
 2. Endpoints return the documented status codes
-3. `pytest` passes
+3. `pytest` passes, and CI is green on the pull request
 4. [docs/API_CONTRACT.md](docs/API_CONTRACT.md) matches the implementation
 5. No secret in any committed file
 6. Merged to `main` via a pull request you opened
