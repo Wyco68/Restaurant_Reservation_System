@@ -10,7 +10,7 @@
 
 # Mainline: nginx recommends it for most deployments, and it gets security
 # releases first.
-FROM nginxinc/nginx-unprivileged:1.29-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 
 ARG GIT_SHA=unknown
 LABEL org.opencontainers.image.title="tableflow-web" \
