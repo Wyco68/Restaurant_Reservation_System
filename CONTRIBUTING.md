@@ -62,7 +62,7 @@ Disjoint by design, so merge conflicts stay rare.
 
 | Member | Owns |
 |---|---|
-| **Aung Hein Saw** | `app/models/`, `app/db/postgres.py`, `app/security.py`, `app/routers/{users,auth}.py`, `alembic/`, `tests/{test_reservation_model,test_query_budget}.py` |
+| **Aung Hein Saw** | `app/models/`, `app/db/postgres.py`, `app/security.py`, `app/routers/{users,auth}.py`, `alembic/`, `tests/{test_reservation_model,test_query_budget,test_security}.py` |
 | **Joe D' Annibelle** | `app/services/reservations.py`, `app/routers/{reservations,restaurants}.py`, `app/schemas/reservation.py`, `scripts/traffic.py`, `tests/{conftest,test_api,test_name_migration,test_concurrency}.py` |
 | **Aung Thiha** | `app/db/mongo.py`, `app/routers/products.py`, `app/schemas/product.py`, `scripts/{seed,backfill_names}.py`, `tests/test_backfill.py`, `loadtest/` |
 | **Win Moe Aung** | `docker-compose.yml`, `Dockerfile`, `docker/`, `k8s/`, `deploy.sh`, `Makefile`, `.github/`, `app/{main,config,migration,cache,observability}.py`, `scripts/{make_env,backup,restore}.sh`, `scripts/wait_for.py`, `tests/{test_cache,test_observability}.py`, `app/services/orders.py`, `app/schemas/order.py`, `app/routers/{orders,admin}.py`, `scripts/phase.py`, `tests/{test_admin_migration,test_orders}.py`, `frontend/`, `README.md`, `docs/`, branch and release management |

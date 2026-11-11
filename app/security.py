@@ -29,14 +29,23 @@ bearer_scheme = HTTPBearer(auto_error=False)
 # worker thread, because on the event loop it would block every other
 # request during that time.
 
+# bcrypt reads at most 72 bytes. bcrypt 4 ignored the rest; bcrypt 5 raises
+# instead. Cutting here keeps long passwords working (a Burmese character
+# is 3 bytes) and hashes made before the upgrade still match.
+BCRYPT_MAX_BYTES = 72
+
+
+def _secret(plain: str) -> bytes:
+    return plain.encode("utf-8")[:BCRYPT_MAX_BYTES]
+
 
 def _hash(plain: str) -> str:
-    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    return bcrypt.hashpw(_secret(plain), bcrypt.gensalt()).decode("utf-8")
 
 
 def _check(plain: str, hashed: str) -> bool:
     try:
-        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+        return bcrypt.checkpw(_secret(plain), hashed.encode("utf-8"))
     except (ValueError, TypeError):
         # A broken hash in the database means the login fails.
         return False
