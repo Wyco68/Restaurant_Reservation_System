@@ -1,6 +1,8 @@
 # TableFlow
 
-Restaurant booking and ordering platform on a dual-database backend: PostgreSQL for transactional state, MongoDB for catalogue and telemetry.
+[![CI](https://github.com/Wyco68/Restaurant_Reservation_System/actions/workflows/ci.yml/badge.svg)](https://github.com/Wyco68/Restaurant_Reservation_System/actions/workflows/ci.yml)
+
+Restaurant booking and ordering platform on a dual-database backend: PostgreSQL for transactional state, MongoDB for catalogue and telemetry. Ships as containers to Kubernetes, with sharded MongoDB, a Redis cache, CI/CD and monitoring.
 
 ---
 
@@ -39,6 +41,14 @@ curl http://localhost:8000/health
 | Interactive docs | http://localhost:8000/docs |
 | Frontend | see below |
 
+**Whole stack in Docker instead** (API, web, migrations, seed, no Python needed):
+
+```bash
+./deploy.sh compose --seed        # then open http://localhost:8080
+```
+
+Kubernetes, CI/CD, backups and monitoring: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+
 **If port 5432 is already in use** (a native PostgreSQL service on the host), set `POSTGRES_PORT=5433` in `.env` and re-run `docker compose up -d`. The committed default stays 5432.
 
 ### Frontend
@@ -60,7 +70,7 @@ No build step and no Node: edit a file in `frontend/src/`, reload the page.
 | Aung Hein Saw | PostgreSQL & Auth | Relational schema, Alembic migrations, users API, JWT + bcrypt, roles | `feature/postgres-schema` |
 | Joe D' Annibelle | Reservations & Concurrency | Booking logic, availability, exclusion constraint, double-booking tests | `feature/reservations` |
 | Aung Thiha | MongoDB & Data | Collections, products API, seed script, migration backfill | `feature/mongo-catalog` |
-| Win Moe Aung | Infrastructure & Version Control | Docker Compose, orders dual-DB flow, frontend, documentation, Git workflow, integration, demo | `feature/infra` |
+| Win Moe Aung | Infrastructure & Version Control | Docker, Kubernetes, CI/CD, caching, sharding, monitoring, orders dual-DB flow, frontend, documentation, Git workflow | `feature/infra` |
 
 File ownership and working agreement: [CONTRIBUTING.md](CONTRIBUTING.md)
 
@@ -72,11 +82,14 @@ File ownership and working agreement: [CONTRIBUTING.md](CONTRIBUTING.md)
   Browser (Vue 3 SPA)
         │ HTTP/JSON
         ▼
-  FastAPI  ── routers → services → models/schemas
+  nginx    ── client files, /api proxy, rate limits
         │
+        ▼
+  FastAPI  ── routers → services → models/schemas
+        │        └── Redis: catalogue cache
    ┌────┴────┐
    ▼         ▼
-PostgreSQL  MongoDB
+PostgreSQL  MongoDB, or 2 shards behind mongos
 :5432       :27017
 
 PostgreSQL          MongoDB
@@ -92,7 +105,7 @@ PostgreSQL owns anything that must be **correct**. MongoDB owns anything that mu
 
 `POST /api/v1/orders` spans both: reads prices from MongoDB, writes the order to PostgreSQL in one transaction, then writes telemetry back to MongoDB.
 
-Rationale and trade-offs: [docs/DESIGN.md](docs/DESIGN.md)
+Rationale and trade-offs: [docs/DESIGN.md](docs/DESIGN.md). Images, cache, sharding, Kubernetes and CI: [docs/DESIGN.md#platform](docs/DESIGN.md#platform)
 
 ---
 
@@ -118,9 +131,11 @@ Base `/api/v1`. Full reference with examples: [docs/API_CONTRACT.md](docs/API_CO
 | `GET` | `/orders` | PG | bearer |
 | `PATCH` | `/orders/{id}/status` | PG | staff |
 | `GET` | `/health` | both | none |
+| `GET` | `/health/live`, `/health/ready` | PG | none |
+| `GET` | `/metrics` | none | internal |
 | `PUT` | `/admin/migration` | PG | admin |
 
-Status codes: `200` `201` `400` `401` `403` `404` `409` `412` `422` `428`
+Status codes: `200` `201` `400` `401` `403` `404` `409` `412` `422` `428`, and `429` from the web tier's rate limits
 
 Editing a reservation needs `If-Match` with its `version`; see [Conventions](docs/API_CONTRACT.md#conventions).
 
@@ -189,6 +204,18 @@ alembic upgrade 0004                                   #   drop guest_name
 
 `Ctrl+C` terminal 2: every check must print `PASS`: 0 5xx, 0 rejected, 0 connection errors, 0 wrong names, p99 < 500 ms.
 
+### Deploy
+
+```bash
+make help                            # every shortcut
+./deploy.sh compose --sharded --seed  # whole stack on sharded MongoDB
+./deploy.sh k8s dev                  # minikube or kind: build, migrate, roll out, smoke test
+./deploy.sh rollback staging         # previous API and web release
+make backup                          # dump both databases
+```
+
+Step by step, CI/CD setup and troubleshooting: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+
 ### Concurrency proof
 
 ```bash
@@ -237,6 +264,7 @@ Double booking is prevented by the `EXCLUDE` constraint, lost updates by optimis
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture decisions and trade-offs |
 | [docs/MIGRATION.md](docs/MIGRATION.md) | Running the zero-downtime migration (CP2 demo) |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | CP3 audit: concurrency proofs, query audit, load test |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Docker, Kubernetes, CI/CD, rollback, backups, monitoring |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Branching, commits, ownership, schedule |
 
 ---
@@ -255,3 +283,10 @@ Double booking is prevented by the `EXCLUDE` constraint, lost updates by optimis
 | Concurrency control (CP3) | Constraint, optimistic and pessimistic; 20-way race tests |
 | Query audit (CP3) | Every list endpoint O(1) SQL, asserted in tests |
 | Load test (CP3) | 50 users, 3 min: p95 20 ms, p99 31 ms, 0 errors |
+| Containers | Non-root multi-stage images; full stack in compose |
+| Kubernetes | dev, staging, prod overlays; migrations before rollout; automatic rollback |
+| CI/CD | Lint, tests, kind deploy, image scan on every PR; staging on merge; prod on approval |
+| Cache | Redis, generation-based invalidation, fails open |
+| Sharding | MongoDB `user_telemetry` and `reviews` over 2 shards of 3 members |
+| Observability | Prometheus metrics, Grafana dashboard, alerts, request IDs in JSON logs |
+| Backups | Nightly PostgreSQL and MongoDB dumps, restore tested |

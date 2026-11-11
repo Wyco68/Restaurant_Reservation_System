@@ -1,0 +1,83 @@
+# Rendered by the nginx image at start: ${API_UPSTREAM} and ${API_BASE} come
+# from the environment. nginx variables ($host, $uri) are left alone because
+# only defined environment variables are substituted.
+
+# Behind a load balancer or ingress the client address is in
+# X-Forwarded-For. Only private-network peers are trusted to set it.
+set_real_ip_from 10.0.0.0/8;
+set_real_ip_from 172.16.0.0/12;
+set_real_ip_from 192.168.0.0/16;
+real_ip_header X-Forwarded-For;
+real_ip_recursive on;
+
+# Per-client rate limits (429 when exceeded). Login is much stricter:
+# it is where password guessing happens.
+limit_req_zone $binary_remote_addr zone=api:10m rate=${API_RATE_LIMIT};
+limit_req_zone $binary_remote_addr zone=login:10m rate=${LOGIN_RATE_LIMIT};
+limit_req_status 429;
+
+# Keep the caller's request ID so one ID follows the request from the
+# browser to the API logs; make one only when there is none.
+map $http_x_request_id $tf_request_id {
+    default $http_x_request_id;
+    ""      $request_id;
+}
+
+server {
+    listen 8080;
+    server_name _;
+    server_tokens off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # Liveness for Docker and Kubernetes. Does not touch the API.
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Runtime config for the client, so the same image works on any host.
+    location = /config.js {
+        default_type application/javascript;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+        return 200 'window.TABLEFLOW_CONFIG = { apiBase: "${API_BASE}" };\n';
+    }
+
+    # Prometheus scrapes the API directly; the public site does not serve it.
+    location = /metrics {
+        return 404;
+    }
+
+    location = /api/v1/auth/login {
+        limit_req zone=login burst=5 nodelay;
+        proxy_pass ${API_UPSTREAM};
+        include /etc/nginx/snippets/proxy.conf;
+    }
+
+    # Same-origin API.
+    location ~ ^/(api/|health|docs|openapi\.json) {
+        limit_req zone=api burst=${API_RATE_BURST} nodelay;
+        proxy_pass ${API_UPSTREAM};
+        include /etc/nginx/snippets/proxy.conf;
+    }
+
+    # Vendored Vue builds change only when the files are replaced.
+    location /vendor/ {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "public, max-age=604800" always;
+    }
+
+    # Hash routing, so every page is index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

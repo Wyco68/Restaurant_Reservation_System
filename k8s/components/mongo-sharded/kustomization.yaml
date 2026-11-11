@@ -1,0 +1,30 @@
+# Replaces the single MongoDB with the sharded cluster. Add it to an
+# overlay with:
+#   components:
+#     - ../../components/mongo-sharded
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - members.yaml
+  - mongos.yaml
+
+configMapGenerator:
+  - name: tableflow-config
+    behavior: merge
+    literals:
+      - MONGO_HOST=mongos
+
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: mongo
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: mongo

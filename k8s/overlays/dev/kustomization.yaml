@@ -1,0 +1,56 @@
+# Local cluster (minikube, kind). One replica of everything, images built
+# on this machine and loaded into the cluster by deploy.sh.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tableflow-dev
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+replicas:
+  - name: api
+    count: 1
+  - name: web
+    count: 1
+
+images:
+  - name: tableflow-api
+    newName: tableflow-api
+    newTag: local
+  - name: tableflow-web
+    newName: tableflow-web
+    newTag: local
+
+configMapGenerator:
+  - name: tableflow-config
+    behavior: merge
+    literals:
+      - APP_ENV=development
+
+patches:
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: api
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+  # One replica: allow a drain to take it.
+  - target:
+      kind: PodDisruptionBudget
+    patch: |-
+      - op: remove
+        path: /spec/minAvailable
+      - op: add
+        path: /spec/maxUnavailable
+        value: 1
+  - target:
+      kind: StatefulSet
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 1Gi

@@ -7,7 +7,9 @@
 
 import { reactive, readonly } from "vue";
 
-export const API_BASE = "http://localhost:8000";
+// Set by /config.js. Empty means the API is on the same origin (the web
+// image proxies /api to it).
+export const API_BASE = window.TABLEFLOW_CONFIG?.apiBase ?? "http://localhost:8000";
 
 const state = reactive({
   token: null,

@@ -1,0 +1,15 @@
+# Weekly update PRs; CI runs on each, so a breaking bump fails before merge.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directories: ["/", "/docker/web", "/docker/mongo-sharded"]
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

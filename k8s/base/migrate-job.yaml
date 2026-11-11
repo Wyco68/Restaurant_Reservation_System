@@ -1,0 +1,74 @@
+# Brings the schema to head. deploy.sh runs it on its own and waits for it
+# before rolling out the API, so new code never starts on an old schema.
+# Every migration is written to work with the code before it
+# (Expand-Contract, docs/MIGRATION.md), so old pods keep serving meanwhile.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  labels:
+    app.kubernetes.io/name: tableflow-migrate
+    app.kubernetes.io/component: migration
+spec:
+  # Retried with exponential back-off (10 s, 20 s, 40 s ...).
+  backoffLimit: 4
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tableflow-migrate
+        app.kubernetes.io/component: migration
+        tableflow.io/db-client: "true"
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # A new environment starts PostgreSQL and this Job together. Without
+        # the wait, every retry can fail before the database is up.
+        - name: wait-for-postgres
+          image: tableflow-api
+          command: ["python", "scripts/wait_for.py", "postgres:5432", "--timeout", "600"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: migrate
+          image: tableflow-api
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: tableflow-config
+            - secretRef:
+                name: tableflow-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

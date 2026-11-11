@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     mongo_host: str = "localhost"
     mongo_port: int = 27017
 
+    # Redis response cache (app/cache.py). Empty turns the cache off.
+    redis_url: str = ""
+    cache_ttl_seconds: int = Field(default=60, ge=1)
+    # Kept short: a slow Redis must not make a request slower than a miss.
+    redis_timeout_seconds: float = Field(default=0.25, gt=0)
+
     # Auth
     # No default and at least 32 characters, because a short key makes the
     # tokens easy to forge.
@@ -41,6 +47,13 @@ class Settings(BaseSettings):
     # App
     app_env: str = "development"
     log_level: str = "INFO"
+    # json in containers (set by the Dockerfile), text in a terminal.
+    log_format: Literal["text", "json"] = "text"
+    # The image sets this to the git commit it was built from.
+    app_version: str = "dev"
+    # Comma-separated browser origins allowed to call the API. The web image
+    # proxies /api on its own origin, so it needs none of these.
+    cors_origins: str = "http://localhost:5500,http://127.0.0.1:5500"
 
     # guest_name migration: the phase a new process starts in. It is changed
     # with PUT /api/v1/admin/migration and lowered at startup if the schema
@@ -61,6 +74,10 @@ class Settings(BaseSettings):
                 "Generate one: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
             )
         return v
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def postgres_dsn(self) -> str:

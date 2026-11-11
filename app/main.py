@@ -12,15 +12,17 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app import migration
+from app import cache, migration, observability
 from app.config import settings
 from app.db import mongo, postgres
 from app.routers import admin, auth, orders, products, reservations, restaurants, users
 
-logging.basicConfig(level=settings.log_level)
+observability.configure_logging(settings.log_level, settings.log_format)
+observability.APP_INFO.labels(settings.app_version, settings.app_env).set(1)
 log = logging.getLogger("tableflow")
 
 
@@ -41,6 +43,7 @@ async def lifespan(app: FastAPI):
     yield
     await postgres.close()
     await mongo.close()
+    await cache.close()
 
 
 app = FastAPI(
@@ -54,15 +57,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# The frontend runs on another port in development. Restrict this before
-# putting the app on a network.
+# Added before CORS so CORS stays the outer layer and cached responses get
+# its headers too.
+app.add_middleware(cache.ResponseCache)
+
+# The frontend runs on another port in development. Behind the web image
+# the browser uses one origin and CORS is not involved. CORS_ORIGINS sets
+# the list.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5500", "http://127.0.0.1:5500"],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "X-Cache", "ETag"],
 )
+
+# Last added is outermost: it times and labels everything, cache hits too.
+app.add_middleware(observability.ObservabilityMiddleware)
 
 app.include_router(auth.router)
 app.include_router(users.router)
@@ -86,9 +98,41 @@ async def health() -> dict:
         "status": "ok" if (pg_ok and mongo_ok) else "degraded",
         "postgres": pg_ok,
         "mongodb": mongo_ok,
+        # Optional: null when no cache is configured. A down Redis does not
+        # degrade the API, it only makes catalogue reads slower.
+        "redis": await cache.ping(),
         "env": settings.app_env,
+        "version": settings.app_version,
         "name_migration_phase": migration.current().value,
     }
+
+
+@app.get("/health/live", tags=["meta"], include_in_schema=False)
+async def live() -> dict:
+    """Liveness: the process answers. Checks nothing else, so a database
+    outage never makes Kubernetes restart healthy pods."""
+    return {"status": "alive"}
+
+
+@app.get("/health/ready", tags=["meta"], include_in_schema=False)
+async def ready(response: Response) -> dict:
+    """Readiness: may this pod get traffic?
+
+    Only PostgreSQL decides: without it no request can authenticate. A
+    MongoDB outage fails the catalogue and orders but not search or
+    bookings, so taking every pod out of the load balancer for it would
+    turn a partial outage into a full one.
+    """
+    pg_ok = await postgres.ping()
+    if not pg_ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {"ready": pg_ok, "postgres": pg_ok, "mongodb": await mongo.ping()}
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    """Prometheus scrape target. Not routed by nginx or the ingress."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/", tags=["meta"])

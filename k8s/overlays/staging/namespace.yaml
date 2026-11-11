@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tableflow-staging
+  labels:
+    # The database images start as root and drop privileges, which
+    # "restricted" forbids; the app pods would pass it.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted

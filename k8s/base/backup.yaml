@@ -1,0 +1,188 @@
+# Nightly logical backups of both databases onto their own volumes, newest
+# seven kept. A volume in the same cluster does not survive losing the
+# cluster: copy the files off-site (object storage) in production
+# (docs/DEPLOYMENT.md#backups).
+#
+# Run one now:  kubectl create job --from=cronjob/postgres-backup postgres-backup-manual
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backups
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-backups
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  labels:
+    app.kubernetes.io/name: postgres-backup
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "0 19 * * *" # 02:00 Asia/Bangkok
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: postgres-backup
+            app.kubernetes.io/component: backup
+            tableflow.io/db-client: "true"
+        spec:
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            # The postgres user in the alpine image.
+            runAsUser: 70
+            runAsGroup: 70
+            fsGroup: 70
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: pg-dump
+              image: postgres:15-alpine
+              command:
+                - sh
+                - -ec
+                - |
+                  mkdir -p /backups
+                  file=/backups/tableflow-$(date -u +%Y%m%dT%H%M%SZ).dump
+                  # Custom format: compressed, and pg_restore can pick tables.
+                  pg_dump -Fc -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$file.partial"
+                  mv "$file.partial" "$file"
+                  echo "wrote $file ($(du -h "$file" | cut -f1))"
+                  ls -1t /backups/*.dump | tail -n +8 | xargs -r rm --
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: tableflow-secrets
+                      key: POSTGRES_PASSWORD
+              envFrom:
+                - configMapRef:
+                    name: tableflow-config
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: postgres-backups
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mongo-backup
+  labels:
+    app.kubernetes.io/name: mongo-backup
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "30 19 * * *" # 02:30 Asia/Bangkok
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: mongo-backup
+            app.kubernetes.io/component: backup
+            tableflow.io/db-client: "true"
+        spec:
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            # Through MONGO_HOST, so on the sharded cluster this dumps via
+            # mongos. That is not a point-in-time copy across shards; for
+            # that, snapshot the shard volumes with the balancer stopped.
+            - name: mongodump
+              image: mongo:7.0
+              command:
+                - sh
+                - -ec
+                - |
+                  umask 077
+                  file=/backups/tableflow-$(date -u +%Y%m%dT%H%M%SZ).archive.gz
+                  # The password goes in a config file, not on the command line.
+                  printf 'password: "%s"\n' "$MONGO_PASSWORD" > /tmp/mongodump.yaml
+                  mongodump --quiet --config=/tmp/mongodump.yaml --host="$MONGO_HOST:$MONGO_PORT" \
+                    --username="$MONGO_USER" --authenticationDatabase=admin --db="$MONGO_DB" \
+                    --archive="$file.partial" --gzip
+                  mv "$file.partial" "$file"
+                  echo "wrote $file ($(du -h "$file" | cut -f1))"
+                  ls -1t /backups/*.archive.gz | tail -n +8 | xargs -r rm --
+              env:
+                - name: MONGO_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: tableflow-secrets
+                      key: MONGO_PASSWORD
+              envFrom:
+                - configMapRef:
+                    name: tableflow-config
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: mongo-backups
+            - name: tmp
+              emptyDir: {}

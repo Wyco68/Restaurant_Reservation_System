@@ -34,11 +34,15 @@ Deferred, not deleted: `opening_hours`, `order_status_history`, analytics endpoi
 |---|---|
 | Backend | Python / FastAPI |
 | Relational | PostgreSQL 15 |
-| Document | MongoDB 6.0 |
+| Document | MongoDB 6.0 in compose (the course baseline), 7.0 on Kubernetes |
 | Frontend | Vue 3 + Vue Router, native ES modules, no build step |
 | ORM | SQLAlchemy 2.x + Alembic |
 | Drivers | psycopg 3, Motor |
-| Containers | Docker Compose |
+| Cache | Redis 7 |
+| Web tier | nginx (unprivileged image) |
+| Containers | Docker Compose; Kubernetes with kustomize overlays |
+| CI/CD | GitHub Actions, GHCR, `deploy.sh` |
+| Observability | Prometheus, Grafana, JSON logs with request IDs |
 
 **On raw SQL.** Raw SQL string concatenation is banned in this codebase as an injection vector. Every query is a parameterized SQLAlchemy Core/ORM construct, with no f-string or `%`-formatted SQL anywhere. Literal SQL appears only as fixed strings with no interpolation: `docker/initdb/01_extensions.sql`; `op.execute()` in migrations for the `EXCLUDE` constraint, partial indexes and `0004`'s NOT NULL sequence, which SQLAlchemy's DDL layer does not express as cleanly; and `SET lock_timeout` in `alembic/env.py`. The rule distinguishes developer-written DDL from SQL assembled out of request data; only the latter is an injection vector.
 
@@ -48,8 +52,10 @@ Deferred, not deleted: `opening_hours`, `order_status_history`, analytics endpoi
 
 ```
 app/
-  main.py          app factory, router mounts, /health
+  main.py          app factory, router mounts, middleware, /health, /metrics
   config.py        pydantic-settings, environment only
+  cache.py         Redis response cache for the public catalogue
+  observability.py request IDs, JSON logs, Prometheus metrics
   security.py      bcrypt, JWT, role dependencies
   db/              connection lifecycle, session dependency, index creation
   models/          SQLAlchemy tables, constraints, indexes
@@ -60,6 +66,10 @@ alembic/versions/  every schema change, forward and reverse
 scripts/           operational tooling run by a human
 tests/             integration tests against the real engines
 frontend/          Vue 3 SPA: src/pages one module per route, vendor/ Vue + Vue Router
+docker/            web (nginx), sharded MongoDB image, Prometheus and Grafana config
+k8s/               base manifests, overlays per environment, mongo-sharded component
+.github/workflows/ CI and deploys
+deploy.sh          every deploy, local or Kubernetes (docs/DEPLOYMENT.md)
 ```
 
 **Frontend without Node.** Node.js is forbidden by `team_project.pdf` p.3, so the client has no build step. Components are plain ES modules with string templates compiled in the browser; an import map in `index.html` resolves `vue` and `vue-router` to the browser builds in `frontend/vendor/`. They are vendored, not loaded from a CDN, so the demo runs without network (`team_project.pdf` p.9).
@@ -94,6 +104,104 @@ Persistence is verified, not assumed:
 docker compose down && docker compose up -d
 python scripts/seed.py --verify     # counts unchanged
 ```
+
+---
+
+## Platform
+
+How the app is built, shipped and run beyond a developer's machine. Commands: [DEPLOYMENT.md](DEPLOYMENT.md).
+
+```
+                      Ingress (any controller)
+                                │
+                     web: nginx, 2+ pods ── rate limits, request IDs, static client
+                                │ /api
+                     api: FastAPI, 2-10 pods (HPA) ── /metrics → Prometheus
+                ┌───────────────┼─────────────────┐
+           PostgreSQL         Redis             mongos ×2
+           StatefulSet        cache      ┌────────┴────────┐
+                                     shard_a (RS×3)   shard_b (RS×3)
+                                         config servers (RS×3)
+```
+
+### Images
+
+| Image | Base | Runs as |
+|---|---|---|
+| `tableflow-api` | `python:3.12-slim`, two stages: the venv is built in the first, only the venv is copied | UID 10001 |
+| `tableflow-web` | `nginx-unprivileged`, client files and a config template | UID 101 |
+| `tableflow-mongo-sharded` | `mongo:7.0` plus the cluster setup scripts, without the unused `gosu` | UID 999 |
+
+One process per container; Kubernetes scales replicas. Uvicorn workers would each hold their own migration phase (`app/migration.py`) and their own metrics registry. The build context is an allowlist (`.dockerignore` starts with `*`), so `.env`, `.git` and local files cannot reach an image. Each image records the commit it was built from, and `/health` reports it.
+
+Configuration is the environment, as before: the same image runs in compose, dev, staging and prod. The web image writes `/config.js` at start from `API_BASE`, so the client needs no rebuild per host.
+
+### Web tier
+
+The browser talks to one origin. nginx serves the client and proxies `/api`, `/health` and `/docs`, so the API needs no CORS in deployment and the Ingress has a single rule with no controller-specific annotations.
+
+nginx also enforces per-client rate limits (30 req/s with a burst of 60; login 10 per minute with a burst of 5) and answers `429`. Doing this in our own config rather than in Ingress annotations means compose and every cluster behave the same. The client address comes from `X-Forwarded-For`, trusted only from private networks.
+
+### Cache
+
+Redis caches the four public catalogue reads: restaurant search and detail, product list and detail. Their answer is the same for every user. Availability is never cached; a stale answer would offer a taken table.
+
+| Decision | Why |
+|---|---|
+| ASGI middleware with an explicit path list | No router changes; a new endpoint is uncached until it is listed |
+| Key = namespace + generation + hash of path and sorted query | `?a=1&b=2` and `?b=2&a=1` share an entry; key length is bounded |
+| A successful write bumps the namespace's generation | Every old entry stops being read at once. No `SCAN`, no key bookkeeping. The bump happens before the response is sent, so a client never reads its own write stale |
+| Only `200` JSON responses are stored, under 512 KB | Errors and large pages go to the database every time |
+| TTL 60 s; Redis `allkeys-lru`, 128-200 MB | A missed bump is bounded by the TTL; junk query strings cannot grow memory without limit |
+| Fail open with a 5 s back-off | Redis down means slower reads, never errors; socket timeout is 250 ms |
+
+Measured through nginx: 18 ms on a miss, 2 ms on a hit; 98.9% hit ratio on catalogue browsing. Tests and the query-count audit run with the cache off; `tests/test_cache.py` turns it on for itself.
+
+### Observability
+
+- **Request IDs.** The caller's `X-Request-ID` is kept if it is a plain token, otherwise one is generated. nginx passes it on. It is in the response and on every log line of the request.
+- **Metrics.** Request count and latency labelled by route template (`/api/v1/restaurants/{restaurant_id}`), never the raw path, so series do not grow with IDs. Cache hits, misses and bypasses per namespace.
+- **Probes.** `/health/live` checks nothing but the process, so a database outage never restarts healthy pods. `/health/ready` fails only without PostgreSQL. A MongoDB outage breaks the catalogue and orders but leaves search and bookings working; taking every pod out of the load balancer for it would turn that into a full outage.
+
+### Sharding
+
+MongoDB is sharded; PostgreSQL is not.
+
+PostgreSQL holds what must be correct, and the guarantees depend on one node: the `EXCLUDE` constraint compares every reservation of a table, and `FOR UPDATE` and `xmin` work within one database. At this size the next step for PostgreSQL is a read replica for search, not partitioning.
+
+MongoDB holds what grows: `user_telemetry` is the highest-volume, append-only collection, and `reviews` grows with every restaurant.
+
+| Collection | Shard key | Why |
+|---|---|---|
+| `user_telemetry` | `{_id: "hashed"}` | Spreads inserts over every shard. A ranged key on ObjectId sends every insert to the last chunk: one hot shard. Reads by time are scatter-gather, which suits analytics |
+| `reviews` | `{restaurant_id: "hashed"}` | Every read is per restaurant, so it goes to one shard (`SINGLE_SHARD` in `explain()`). With 40 restaurants the split is uneven (65/35); a large restaurant would need `{restaurant_id, created_at}` |
+| `products` | unsharded | Small reference data with a text index |
+
+Two consequences found while building it:
+
+- An upsert into a sharded collection must include the shard key in its filter. `scripts/seed.py` upserted reviews by `_id` alone and failed with *could not extract exact shard key*; it now filters on `_id` and `restaurant_id`, which is the same document either way.
+- `mongorestore --drop` through mongos drops the sharded collection and its shard key with it. Restores empty the collections instead (`scripts/restore.sh`).
+
+The cluster runs with keyfile authentication from the first start. With access control on and no users, `rs.initiate` and the first `createUser` are allowed only from localhost, so every member sets itself up from inside its own container (`docker/mongo-sharded/entrypoint.sh`). In compose each replica set has one member; in Kubernetes three, so a member can fail without losing the primary.
+
+### Kubernetes
+
+| Concern | Choice |
+|---|---|
+| Environments | One base, overlays for `dev`, `staging`, `prod`; sharded MongoDB is a kustomize component that `prod` and `dev-sharded` add |
+| Schema changes | A Job runs `alembic upgrade head` before the API rolls out; new code never starts on an old schema. Old pods keep serving meanwhile because every migration is Expand-Contract |
+| Rollouts | `maxUnavailable: 0`, `preStop` sleep so endpoints drain, readiness gates traffic; `deploy.sh` rolls back to the exact previous revisions if the rollout or smoke test fails |
+| Capacity | HPA on CPU (prod 3-10 API pods); PodDisruptionBudgets keep 2 API pods and a replica-set majority through node drains |
+| Resources | Requests on everything; memory limits; no CPU limit on the API, where throttling hurts latency more than it protects neighbours |
+| Security | Non-root, read-only root filesystem, all capabilities dropped, `RuntimeDefault` seccomp on app pods; namespaces enforce Pod Security `baseline` (the database images start as root) and warn on `restricted`; NetworkPolicy denies all ingress except ingress → web → api → databases |
+| Config | `configMapGenerator`, so a config change renames the ConfigMap and rolls the pods |
+| Secrets | Created by `deploy.sh` from CI environment secrets; never in git. External Secrets or Sealed Secrets would be the next step |
+
+PostgreSQL and the single MongoDB run as StatefulSets for dev and staging. Production would normally use a managed database or an operator (CloudNativePG); only `POSTGRES_HOST` changes.
+
+### CI/CD
+
+Every pull request is linted, tested against real databases, its manifests validated, and the whole stack deployed with `deploy.sh` to a throwaway kind cluster. Merging to `main` publishes scanned images tagged with the commit and deploys them to staging; production is a manual run that waits for approval. Third-party actions are pinned to commit SHAs: a tag can be moved to different code after the fact, which is how the 2025 `tj-actions/changed-files` compromise spread.
 
 ---
 
@@ -313,3 +421,7 @@ Measurements, query plans and the load test: [PERFORMANCE.md](PERFORMANCE.md).
 | Live demo fails | Recorded backup walkthrough |
 | Migration corrupts data | Guards refuse out-of-order phases; `0004` refuses unmigrated rows; `traffic.py` checks every name it reads back; back up before Contract |
 | A migration step queues traffic behind its lock | `lock_timeout = 5s`; the step fails and is rerun |
+| A bad release reaches production | Staging first; readiness gates traffic; `deploy.sh` rolls back on a failed rollout or smoke test |
+| Redis fails | Cache fails open; reads go to the databases |
+| A MongoDB node fails | Three-member replica sets elect a new primary in seconds |
+| A cluster or volume is lost | Nightly dumps of both databases, newest 7 kept; copy off-cluster in production |

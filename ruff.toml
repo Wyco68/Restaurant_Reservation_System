@@ -1,0 +1,18 @@
+# Lint settings for CI (ruff check .).
+target-version = "py311"
+line-length = 100
+extend-exclude = ["handoff"]
+
+[lint]
+# pyflakes, pycodestyle and bugbear. Line length is left to review: the
+# long lines are SQL plans and URLs that read worse wrapped.
+select = ["E", "F", "W", "B"]
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+# Coroutines built in a loop and awaited in the same iteration.
+"tests/test_concurrency.py" = ["B023"]
+# zip() over two lists that have the same length by construction.
+"tests/test_orders.py" = ["B905"]
+# Loops that only repeat N times and never read the counter.
+"scripts/seed.py" = ["B007"]

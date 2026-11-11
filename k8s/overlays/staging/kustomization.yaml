@@ -1,0 +1,32 @@
+# Shared pre-production cluster. Images come from GHCR; deploy.sh sets the
+# tag to the commit being deployed.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tableflow-staging
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+images:
+  - name: tableflow-api
+    newName: ghcr.io/wyco68/tableflow-api
+    newTag: main
+  - name: tableflow-web
+    newName: ghcr.io/wyco68/tableflow-web
+    newTag: main
+
+configMapGenerator:
+  - name: tableflow-config
+    behavior: merge
+    literals:
+      - APP_ENV=staging
+
+patches:
+  - target:
+      kind: Ingress
+      name: tableflow
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: staging.tableflow.example.com
