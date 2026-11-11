@@ -10,7 +10,7 @@ pydantic-settings==2.7.0
 # PostgreSQL
 # SQLAlchemy 2.x. All queries use parameters; we do not build SQL strings.
 SQLAlchemy[asyncio]==2.0.36
-psycopg[binary,pool]==3.2.3
+psycopg[binary,pool]==3.3.8
 alembic==1.14.0
 
 # MongoDB
