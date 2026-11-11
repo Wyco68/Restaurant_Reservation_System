@@ -124,7 +124,7 @@ Images are `ghcr.io/wyco68/tableflow-{api,web,mongo-sharded}:<short commit>`, pl
 
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) runs `deploy.sh` with `--no-build`, on the images CI pushed:
 
-- after CI passes on `main`: deploy to staging
+- after CI passes on `main`: deploy to staging (skipped with a notice until `staging` has a `KUBECONFIG` secret)
 - **Run workflow**: staging or prod, `deploy` or `rollback`, optional image tag
 
 One-time GitHub setup, under **Settings > Environments**, for `staging` and `prod`:
