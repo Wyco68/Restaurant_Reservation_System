@@ -1,15 +1,52 @@
 # Weekly update PRs; CI runs on each, so a breaking bump fails before merge.
+# Minor and patch updates arrive as one PR per ecosystem. Majors stay one
+# PR each, since they are the ones that break. Past the open PR limit,
+# updates wait for a merge or close, so do not leave a major hanging.
 version: 2
 updates:
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
+    # A dependency joins the first group it matches.
+    groups:
+      # pytest-asyncio 1.x needs pytest>=8.4: they only install together,
+      # so they share a PR even for a major.
+      pytest:
+        patterns: ["pytest", "pytest-*"]
+      pip-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: docker
-    directories: ["/", "/docker/web", "/docker/mongo-sharded"]
+    directories: ["/", "/docker/web"]
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      docker-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # A separate entry so the ignore covers only this image. docker-compose.yml
+  # is not tracked: its mongo:6.0 is the course baseline.
+  - package-ecosystem: docker
+    directory: /docker/mongo-sharded
+    schedule:
+      interval: weekly
+    ignore:
+      # 8.0 does not start on Linux 6.19+ (SERVER-121912). Move to a new
+      # major by hand once it starts on current kernels.
+      - dependency-name: mongo
+        update-types: ["version-update:semver-major"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
