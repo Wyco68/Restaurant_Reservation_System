@@ -24,7 +24,7 @@ prometheus-client==0.21.1
 
 # Auth
 bcrypt==4.2.1
-PyJWT==2.10.1
+PyJWT==2.15.1
 
 # Seed data and the ops scripts in scripts/
 Faker==33.1.0

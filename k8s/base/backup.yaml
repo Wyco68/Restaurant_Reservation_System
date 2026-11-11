@@ -140,7 +140,7 @@ spec:
             # mongos. That is not a point-in-time copy across shards; for
             # that, snapshot the shard volumes with the balancer stopped.
             - name: mongodump
-              image: mongo:6.0
+              image: mongo:7.0
               command:
                 - sh
                 - -ec

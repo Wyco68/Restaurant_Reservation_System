@@ -234,5 +234,6 @@ Alert rules ([`docker/monitoring/alerts.yml`](../docker/monitoring/alerts.yml)) 
 | `429 Too Many Requests` through the web tier | per-client rate limit: 30 req/s (burst 60), login 10/min (burst 5) | expected for load tests through nginx; point Locust at the API directly or raise `API_RATE_LIMIT` on the web container |
 | `X-Cache: BYPASS` on every catalogue read | Redis unreachable; the API serves from the databases | `kubectl -n <ns> get pods -l app.kubernetes.io/name=redis` |
 | mongos not ready | a replica set has no primary yet, or `mongo-keyfile` is missing | `kubectl -n <ns> logs deploy/mongos`; setup steps retry for two minutes |
+| mongos logs `Authentication failed` and restarts | the config servers hold a user from an older `MONGO_PASSWORD`: the Secret was regenerated but the volumes were kept (or, on minikube, a recreated namespace reused old volume directories) | set the old `MONGO_PASSWORD` again; on a throwaway environment, delete the namespace and its released PersistentVolumes and deploy again |
 | Upsert into `reviews` fails with *could not extract exact shard key* | sharded collection, filter without `restaurant_id` | include the shard key in the filter, as `scripts/seed.py` does |
 | `would violate PodSecurity "restricted"` warnings | database images start as root | expected; namespaces enforce `baseline` and only warn on `restricted` |

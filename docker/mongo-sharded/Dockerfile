@@ -6,7 +6,14 @@
 #
 #   docker build -f docker/mongo-sharded/Dockerfile -t tableflow-mongo-sharded .
 
-FROM mongo:6.0
+# 7.0: 6.0 reached end of life in July 2025 and its image is no longer
+# rebuilt. 8.0 does not start on Linux 6.19+ yet (SERVER-121912).
+FROM mongo:7.0
+
+# gosu is only used by the official entrypoint, which this image replaces;
+# every member already starts as the mongodb user. An unused binary is
+# attack surface the scanner keeps flagging.
+RUN rm /usr/local/bin/gosu
 
 COPY --chmod=755 docker/mongo-sharded/entrypoint.sh /usr/local/bin/tf-mongo
 COPY --chmod=755 docker/mongo-sharded/status.sh /usr/local/bin/tf-shard-status

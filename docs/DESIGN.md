@@ -34,7 +34,7 @@ Deferred, not deleted: `opening_hours`, `order_status_history`, analytics endpoi
 |---|---|
 | Backend | Python / FastAPI |
 | Relational | PostgreSQL 15 |
-| Document | MongoDB 6.0 |
+| Document | MongoDB 6.0 in compose (the course baseline), 7.0 on Kubernetes |
 | Frontend | Vue 3 + Vue Router, native ES modules, no build step |
 | ORM | SQLAlchemy 2.x + Alembic |
 | Drivers | psycopg 3, Motor |
@@ -130,7 +130,7 @@ How the app is built, shipped and run beyond a developer's machine. Commands: [D
 |---|---|---|
 | `tableflow-api` | `python:3.12-slim`, two stages: the venv is built in the first, only the venv is copied | UID 10001 |
 | `tableflow-web` | `nginx-unprivileged`, client files and a config template | UID 101 |
-| `tableflow-mongo-sharded` | `mongo:6.0` plus the cluster setup scripts | UID 999 |
+| `tableflow-mongo-sharded` | `mongo:7.0` plus the cluster setup scripts, without the unused `gosu` | UID 999 |
 
 One process per container; Kubernetes scales replicas. Uvicorn workers would each hold their own migration phase (`app/migration.py`) and their own metrics registry. The build context is an allowlist (`.dockerignore` starts with `*`), so `.env`, `.git` and local files cannot reach an image. Each image records the commit it was built from, and `/health` reports it.
 

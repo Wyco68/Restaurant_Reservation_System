@@ -8,7 +8,9 @@
 # one origin and the API needs no CORS rule. The image runs as a non-root
 # user and listens on 8080.
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+# Mainline: nginx recommends it for most deployments, and it gets security
+# releases first.
+FROM nginxinc/nginx-unprivileged:1.29-alpine
 
 ARG GIT_SHA=unknown
 LABEL org.opencontainers.image.title="tableflow-web" \
@@ -22,6 +24,13 @@ ENV API_UPSTREAM=http://api:8000 \
     API_RATE_LIMIT=30r/s \
     API_RATE_BURST=60 \
     LOGIN_RATE_LIMIT=10r/m
+
+# The base image is rebuilt less often than Alpine ships security fixes, so
+# take them at build time. The image scan in CI catches what is still open.
+USER root
+# hadolint ignore=DL3017
+RUN apk upgrade --no-cache
+USER 101
 
 COPY docker/web/security-headers.conf docker/web/proxy.conf /etc/nginx/snippets/
 COPY docker/web/default.conf.template /etc/nginx/templates/default.conf.template
