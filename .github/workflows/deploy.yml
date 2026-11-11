@@ -1,6 +1,7 @@
 # Continuous delivery with deploy.sh.
 #
-#   main, after CI passes  -> staging, automatically
+#   main, after CI passes  -> staging, automatically (skipped with a notice
+#                             while the environment has no KUBECONFIG)
 #   Run workflow (manual)  -> staging or prod; deploy or rollback
 #
 # Each GitHub environment (staging, prod) holds its own secrets:
@@ -63,18 +64,31 @@ jobs:
           COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: echo "IMAGE_TAG=${INPUT_TAG:-${COMMIT::7}}" >> "$GITHUB_ENV"
 
+      # Until a cluster is connected, automatic runs after a merge are
+      # skipped with a notice; a deploy someone started by hand fails, since
+      # they expected it to happen.
       - name: kubeconfig
         env:
           KUBECONFIG_DATA: ${{ secrets.KUBECONFIG }}
+          EVENT: ${{ github.event_name }}
         run: |
-          [ -n "$KUBECONFIG_DATA" ] || { echo "::error::no KUBECONFIG secret in environment $TARGET"; exit 1; }
+          if [ -z "$KUBECONFIG_DATA" ]; then
+            if [ "$EVENT" = workflow_run ]; then
+              echo "::notice::skipped: no KUBECONFIG secret in environment $TARGET (docs/DEPLOYMENT.md#cicd)"
+              echo "Skipped: no cluster is configured for $TARGET yet." >> "$GITHUB_STEP_SUMMARY"
+              echo "SKIP=1" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "::error::no KUBECONFIG secret in environment $TARGET"
+            exit 1
+          fi
           mkdir -p ~/.kube
           printf '%s' "$KUBECONFIG_DATA" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
           kubectl version
 
       - name: deploy
-        if: env.ACTION == 'deploy'
+        if: env.SKIP != '1' && env.ACTION == 'deploy'
         env:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           MONGO_PASSWORD: ${{ secrets.MONGO_PASSWORD }}
@@ -83,11 +97,11 @@ jobs:
         run: ./deploy.sh k8s "$TARGET" --no-build --tag "$IMAGE_TAG"
 
       - name: rollback
-        if: env.ACTION == 'rollback'
+        if: env.SKIP != '1' && env.ACTION == 'rollback'
         run: ./deploy.sh rollback "$TARGET"
 
       - name: summary
-        if: always()
+        if: always() && env.SKIP != '1'
         run: |
           {
             echo "### $ACTION $IMAGE_TAG to $TARGET"
