@@ -8,7 +8,7 @@
 
 # 7.0: 6.0 reached end of life in July 2025 and its image is no longer
 # rebuilt. 8.0 does not start on Linux 6.19+ yet (SERVER-121912).
-FROM mongo:7.0
+FROM mongo:9.0
 
 # gosu is only used by the official entrypoint, which this image replaces;
 # every member already starts as the mongodb user. An unused binary is
